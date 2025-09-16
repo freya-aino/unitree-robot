@@ -1,5 +1,5 @@
 [project]
-name = "unitree-robot"
+name = "unitree_robot"
 version = "0.1.0"
 description = ""
 authors = [
@@ -9,18 +9,18 @@ readme = "README.md"
 requires-python = "~3.10"
 dependencies = [
     "cyclonedds==0.10.2",
+    "pydantic (>=2.11.9,<3.0.0)",
+    "numpy (>=2.2,<3.0)",
 ]
 
-[tool.poetry]
-packages = [
-    { include = "common", from = "src" },
-    { include = "dev", from = "src" },
-    { include = "train", from = "src" },
-    { include = "prod", from = "src" }
-]
+[tool.poetry.scripts]
+test = "pytest:main"
 
 [tool.poetry.group.dev.dependencies]
 pandas = "^2.3.2"
+pytest = "^8.4.2"
+pytest-cov = "^7.0.0"
+pytest-mock = "^3.15.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
