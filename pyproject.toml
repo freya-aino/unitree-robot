@@ -21,6 +21,13 @@ pandas = "^2.3.2"
 pytest = "^8.4.2"
 pytest-cov = "^7.0.0"
 pytest-mock = "^3.15.0"
+brax = "^0.13.0"
+warp-lang = "^1.9.0"
+
+
+[tool.poetry.group.train.dependencies]
+brax = "^0.13.0"
+warp-lang = "^1.9.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
