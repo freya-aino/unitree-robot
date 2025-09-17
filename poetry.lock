@@ -632,6 +632,21 @@ MarkupSafe = ">=2.0"
 i18n = ["Babel (>=2.7)"]
 
 [[package]]
+name = "lightwheel"
+version = "0.1.0"
+description = "Light‑weight wrapper for usd2mjcf"
+optional = false
+python-versions = "~=3.10"
+groups = ["main"]
+files = [
+    {file = "lightwheel-0.1.0-py3-none-any.whl", hash = "sha256:b652babe0e2d9c1f41050f5859b71f7225d5b2edee71bb19bd364a1738d31a84"},
+]
+
+[package.source]
+type = "file"
+url = "external/usd2mjcf/dist/lightwheel-0.1.0-py3-none-any.whl"
+
+[[package]]
 name = "lxml"
 version = "4.9.4"
 description = "Powerful and Pythonic XML processing library combining libxml2/libxslt with the ElementTree API."
@@ -2417,4 +2432,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "~3.10"
-content-hash = "922a2a971be3eb9bbeec9be793bd0d22a90c6db386b2b49d144c1acd955f0e1b"
+content-hash = "d2a08e968c7f19ca30a2e7537c305b46b28c192e386c322e9cc5b1ba6dc3dddb"

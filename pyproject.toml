@@ -11,6 +11,7 @@ dependencies = [
     "cyclonedds==0.10.2",
     "pydantic (>=2.11.9,<3.0.0)",
     "numpy (>=1.26,<2.0)",
+    "lightwheel @ file:///home/fey/programming/unitree-robot/external/usd2mjcf/dist/lightwheel-0.1.0-py3-none-any.whl",
 ]
 
 [tool.poetry.scripts]
