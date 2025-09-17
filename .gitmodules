@@ -1,6 +1,3 @@
-[submodule "unitree_model"]
-	path = unitree_robot/common/unitree_model
-	url = https://huggingface.co/datasets/unitreerobotics/unitree_model
 [submodule "mjcf-blender-addon"]
 	path = external/mjcf-blender-addon
 	url = https://github.com/Balint-H/blender-mjcf.git
