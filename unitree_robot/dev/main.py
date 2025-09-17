@@ -7,11 +7,11 @@ from brax.training.agents.ppo import train as ppo
 import jax
 
 
-env = envs.get_environment(
-    env_name="inverted_double_pendulum",
-    backend="positional"
-)
-state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed = 0))
+# env = envs.get_environment(
+#     env_name="inverted_double_pendulum",
+#     backend="positional"
+# )
+# state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed = 0))
 
 train_fn = functools.partial(
     ppo.train,
@@ -31,7 +31,12 @@ train_fn = functools.partial(
     entropy_cost = 1e-2,
     seed = 0
 )
-make_inference_fn, parameters, _ = train_fn(
-    environment = env,
-    progress_fn = lambda num_steps, metrics: print(metrics["eval/episode_reward"])
+# make_inference_fn, parameters, _ = train_fn(
+#     environment = env,
+#     progress_fn = lambda num_steps, metrics: print(metrics["eval/episode_reward"])
+# )
+
+import brax_envs
+env = brax_envs.CustomEnv(
+    backend = "positional"
 )

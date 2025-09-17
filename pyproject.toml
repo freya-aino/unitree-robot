@@ -10,7 +10,7 @@ requires-python = "~3.10"
 dependencies = [
     "cyclonedds==0.10.2",
     "pydantic (>=2.11.9,<3.0.0)",
-    "numpy (>=2.2,<3.0)",
+    "numpy (>=1.26,<2.0)",
 ]
 
 [tool.poetry.scripts]
@@ -23,11 +23,15 @@ pytest-cov = "^7.0.0"
 pytest-mock = "^3.15.0"
 brax = "^0.13.0"
 warp-lang = "^1.9.0"
+scipy = ">=1.15,<2.0"
+nvidia-srl-usd = "^2.0.0"
+nvidia-srl-usd-to-urdf = "^1.0.3"
 
 
 [tool.poetry.group.train.dependencies]
 brax = "^0.13.0"
 warp-lang = "^1.9.0"
+scipy = ">=1.15,<2.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
