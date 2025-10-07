@@ -1,30 +1,16 @@
-from cyclonedds import builtin, sub
-import cyclonedds.domain as dds
-import cyclonedds.core as core
-import cyclonedds.idl as idl
-from cyclonedds.sub import DataReader
+from pathlib import Path
+
 from unitree_robot.common.cdds import get_all_cdds_topics
 from unitree_robot.common.datastructure import NETWORK_INTERFACE
+from mujoco import MjModel
 
 if __name__ == "__main__":
 
-    all_topics = get_all_cdds_topics()
+    file_path = Path("external/files/urdf/Go2/go2.urdf").resolve()
 
-    print(all_topics)
+    model = MjModel.from_xml_path(str(file_path))
 
-    # cdds_monitor = CycloneDDSMonitor(
-    #     network_interface=NETWORK_INTERFACE.LAPTOP_1.value
-    # )
 
-    # try:
-    #     cdds_monitor.start()
 
-    #     for _ in range(100):
-
-    #         dat = cdds_monitor.get_current_data()
-
-    #         print(dat)
-
-    # except Exception as e:
-    #     print(e.with_traceback)
-    #     cdds_monitor.stop()
+    # all_topics = get_all_cdds_topics()
+    # print(all_topics)

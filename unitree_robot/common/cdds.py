@@ -31,7 +31,7 @@ def get_all_cdds_topics(
         while time.monotonic() < deadline:
             samples = reader.take()
             for sample in samples:
-                all_topics[sample.topic_name] = None
+                all_topics[sample.topic_name] = sample.type_name
             prog_bar.n = timeout_s - (deadline - time.monotonic())
             prog_bar.refresh()
             prog_bar.set_postfix(topics_found=len(all_topics))
