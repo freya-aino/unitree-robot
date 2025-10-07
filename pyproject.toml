@@ -10,7 +10,7 @@ requires-python = "~3.10"
 dependencies = [
     "cyclonedds==0.10.2",
     "pydantic (>=2.11.9,<3.0.0)",
-    "numpy (>=1.26,<2.0)",
+    "numpy (>=1.26,<2.0)"
 ]
 
 [tool.poetry.scripts]
@@ -27,6 +27,7 @@ scipy = ">=1.15,<2.0"
 lightwheel = {url = "https://github.com/freya-aino/lightwheel/releases/download/v1.0.1/lightwheel-1.0.1-py3-none-any.whl"}
 usd-core = "^25.8"
 unitree-sdk2py = {url = "https://github.com/freya-aino/unitree_sdk2_python/releases/download/v1.0.2/unitree_sdk2py-1.0.2-py3-none-any.whl"}
+tqdm = ">=4.67.1,<5.0.0"
 
 
 [tool.poetry.group.train.dependencies]
