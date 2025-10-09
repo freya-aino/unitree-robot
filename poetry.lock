@@ -527,6 +527,24 @@ files = [
 colorama = {version = "*", markers = "platform_system == \"Windows\""}
 
 [[package]]
+name = "coacd"
+version = "1.0.7"
+description = "Approximate Convex Decomposition for 3D Meshes with Collision-Aware Concavity and Tree Search"
+optional = false
+python-versions = ">=3.9"
+groups = ["dev"]
+files = [
+    {file = "coacd-1.0.7-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:67a6badf5903e0f64d689156b4f3a1c67a60e5c4402b0fbc085280844252a125"},
+    {file = "coacd-1.0.7-cp39-abi3-macosx_11_0_x86_64.whl", hash = "sha256:dd823f968ade4ead1f8ea579d6317c39eaa12e0f14031b3bcb6ea43a9d92c3b6"},
+    {file = "coacd-1.0.7-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:99fda62b598cea3bfd6233eab1bf9693668763694f8062dd4349409bc6591798"},
+    {file = "coacd-1.0.7-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d1d330c03cdd3f5a571677d5cbb991a51d96bd0e157a34b0fb3623d7ed3b1886"},
+    {file = "coacd-1.0.7-cp39-abi3-win_amd64.whl", hash = "sha256:8bfeb23aecc0265baea2d5c446ceaa1c117ba4fd112843944fb78f5bb9626a7b"},
+]
+
+[package.dependencies]
+numpy = "*"
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 description = "Cross-platform colored terminal text."
@@ -1662,6 +1680,28 @@ atomic-cache = ["atomicwrites"]
 interegular = ["interegular (>=0.3.1,<0.4.0)"]
 nearley = ["js2py"]
 regex = ["regex"]
+
+[[package]]
+name = "lightwheel"
+version = "1.0.3"
+description = "Add your description here"
+optional = false
+python-versions = "~=3.10.0"
+groups = ["dev"]
+files = [
+    {file = "lightwheel-1.0.3-py3-none-any.whl", hash = "sha256:64751aab74184028c5768f2c35786aa5dc7e8656dcf34818251c8c0661ac744b"},
+]
+
+[package.dependencies]
+coacd = ">=1.0.7"
+numpy = ">=1.26.0,<1.27.0"
+scipy = ">=1.15.3"
+trimesh = ">=4.8.2"
+usd-core = ">=23.11,<24.0"
+
+[package.source]
+type = "url"
+url = "https://github.com/freya-aino/lightwheel/releases/download/v1.0.3/lightwheel-1.0.3-py3-none-any.whl"
 
 [[package]]
 name = "lxml"
@@ -4471,4 +4511,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "~3.10"
-content-hash = "f0af97e0a8fc7be125b4ab016c6efc771193f34747d05ac6687fb2a86a6a2b69"
+content-hash = "a7e2b7ed3cb92563d6f82a5106dd0ba7d402fac65638c9ad84e2a536a2332795"
