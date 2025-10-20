@@ -31,11 +31,8 @@ nvidia-srl-usd-to-urdf = "^1.0.3"
 usd-core = ">=23.11,<24.0"
 mujoco = "^3.3.6"
 lightwheel = {url = "https://github.com/freya-aino/lightwheel/releases/download/v1.0.3/lightwheel-1.0.3-py3-none-any.whl"}
-<<<<<<< HEAD
 mujoco-mjx = "^3.3.6"
-=======
 marimo = "^0.17.0"
->>>>>>> 3b5ca6c (adding marimo)
 
 
 [tool.poetry.group.train.dependencies]
