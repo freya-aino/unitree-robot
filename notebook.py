@@ -6,15 +6,84 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+<<<<<<< HEAD
     from brax.io import mjcf
     from mujoco import mjx
+=======
+    import marimo as mo
+    return
+
+
+@app.cell
+def _():
+    from mujoco import mjx
+    from mujoco import MjModel
+    from brax.io import mjcf
+    return MjModel, mjx
+>>>>>>> 27bb1f0 (notebook changes)
 
     import mujoco as mj
     import polars as pl
     import marimo as mo
     import mediapy as media
 
+<<<<<<< HEAD
     import jax
+=======
+@app.cell
+def _(MjModel, mjx):
+    mj_model = MjModel.from_xml_path("./external/files/mjcf/Go2/go2.xml")
+    mjx_model = mjx.put_model(mj_model)
+    mjx_model
+    return
+
+
+@app.cell
+def _():
+    # import functools
+    # import brax
+
+    # from brax import envs
+    # from brax.training.agents.ppo import train as ppo
+
+    # import jax
+
+
+    # # env = envs.get_environment(
+    # #     env_name="inverted_double_pendulum",
+    # #     backend="positional"
+    # # )
+    # # state = jax.jit(env.reset)(rng=jax.random.PRNGKey(seed = 0))
+
+    # train_fn = functools.partial(
+    #     ppo.train,
+    #     num_timesteps = 20_000,
+    #     num_evals = 16,
+    #     num_envs = 16,
+    #     num_minibatches = 32,
+    #     batch_size = 4,
+    #     reward_scaling = 10,
+    #     episode_length = 1000,
+    #     normalize_observations = True,
+    #     action_repeat = 1,
+    #     unroll_length = 5,
+    #     num_updates_per_batch = 4,
+    #     discounting = 0.97,
+    #     learning_rate = 3e-4,
+    #     entropy_cost = 1e-2,
+    #     seed = 0
+    # )
+    # # make_inference_fn, parameters, _ = train_fn(
+    # #     environment = env,
+    # #     progress_fn = lambda num_steps, metrics: print(metrics["eval/episode_reward"])
+    # # )
+
+    # import brax_envs
+    # env = brax_envs.CustomEnv(
+    #     backend = "positional"
+    # )
+
+>>>>>>> 27bb1f0 (notebook changes)
     return
 
 
