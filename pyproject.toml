@@ -31,7 +31,7 @@ usd-core = ">=23.11,<24.0"
 mujoco = "^3.3.6"
 lightwheel = {url = "https://github.com/freya-aino/lightwheel/releases/download/v1.0.3/lightwheel-1.0.3-py3-none-any.whl"}
 mujoco-mjx = "^3.3.6"
-marimo = "^0.17.0"
+marimo = {extras = ["mcp"], version = "^0.17.0"}
 polars = "^1.34.0"
 mediapy = "^1.2.4"
 
