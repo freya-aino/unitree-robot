@@ -6,66 +6,107 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    from brax.io import mjcf
-    from mujoco import mjx
+    import jax
 
     import mujoco as mj
     import polars as pl
     import marimo as mo
-    import mediapy as media
+    import mujoco.viewer
 
-    import jax
-    return jax, media, mj, mjx
+    from brax.io import mjcf
+    from mujoco import mjx
+    from time import sleep, perf_counter
+    from os import getcwd
+    from threading import Lock, Thread
+    return Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep
 
 
 @app.cell
-def _(jax, media, mj, mjx):
-    xml = """
-    <mujoco>
-      <worldbody>
-        <light name="top" pos="0 0 1"/>
-        <body name="box_and_sphere" euler="0 0 -30">
-          <joint name="swing" type="hinge" axis="1 -1 0" pos="-.2 -.2 -.2"/>
-          <geom name="red_box" type="box" size=".2 .2 .2" rgba="1 0 0 1"/>
-          <geom name="green_sphere" pos=".2 .2 .2" size=".1" rgba="0 1 0 1"/>
-        </body>
-      </worldbody>
-    </mujoco>
-    """
+def _(Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep):
+    lock = Lock()
 
-    mj_model = mj.MjModel.from_xml_string(xml)
+    mj_model = mj.MjModel.from_xml_path(f"{getcwd()}\\external\\files\\scenes\\scene.xml")
+    # mj_model = mj.MjModel.from_xml_path(f"{getcwd()}/external/unitree-mujoco/unitree_robots/go2/scene.xml")
     mj_data = mj.MjData(mj_model)
-    renderer = mj.Renderer(mj_model)
-
-    mjx_model = mjx.put_model(mj_model)
-    mjx_data = mjx.put_data(mj_model, mj_data)
 
 
-    # enable joint visualization option:
-    scene_option = mj.MjvOption()
-    scene_option.flags[mj.mjtVisFlag.mjVIS_JOINT] = True
+    mj_viewer = mj.viewer.launch_passive(mj_model, mj_data)
 
-    duration = 3.8  # (seconds)
-    framerate = 60  # (Hz)
+    # mj.mj_resetData(mj_model, mj_data)
+    mj_model.opt.timestep = 1/200
+
+    sleep(0.2)
+
+    def ViewerThread():
+        while mj_viewer.is_running():
+            lock.acquire()
+            mj_viewer.sync()
+            lock.release()
+            sleep(1/50)
+
+    def SimulationThread():
+        while mj_viewer.is_running():
+            step_start = perf_counter()
+
+            lock.acquire()
+            mujoco.mj_step(mj_model, mj_data)
+            lock.release()
+
+            time_until_next_step = mj_model.opt.timestep - (
+                perf_counter() - step_start
+            )
+            if time_until_next_step > 0:
+                sleep(time_until_next_step)
 
 
-    jit_step = jax.jit(mjx.step)
+    viewer_thread = Thread(target=ViewerThread)
+    simulation_thread = Thread(target=SimulationThread)
 
-    frames = []
-    mj.mj_resetData(mj_model, mj_data)
+    viewer_thread.start()
+    simulation_thread.start()
+    return
 
-    while mjx_data.time < duration:
-      mjx_data = jit_step(mjx_model, mjx_data)
-      if len(frames) < mjx_data.time * framerate:
 
-        mj_data = mjx.get_data(mj_model, mjx_data)
-        renderer.update_scene(mj_data, scene_option=scene_option)
-        pixels = renderer.render()
-        frames.append(pixels)
+@app.cell
+def _():
+    return
 
-        media
 
-    media.show_video(frames, fps=framerate)
+@app.cell
+def _():
+    # mj_model = mj.MjModel.from_xml_string(xml)
+    # mj_data = mj.MjData(mj_model)
+    # renderer = mj.Renderer(mj_model)
+
+    # mjx_model = mjx.put_model(mj_model)
+    # mjx_data = mjx.put_data(mj_model, mj_data)
+
+
+    # # enable joint visualization option:
+    # scene_option = mj.MjvOption()
+    # scene_option.flags[mj.mjtVisFlag.mjVIS_JOINT] = True
+
+    # duration = 3.8  # (seconds)
+    # framerate = 60  # (Hz)
+
+
+    # jit_step = jax.jit(mjx.step)
+
+    # frames = []
+    # mj.mj_resetData(mj_model, mj_data)
+
+    # while mjx_data.time < duration:
+    #   mjx_data = jit_step(mjx_model, mjx_data)
+    #   if len(frames) < mjx_data.time * framerate:
+
+    #     mj_data = mjx.get_data(mj_model, mjx_data)
+    #     renderer.update_scene(mj_data, scene_option=scene_option)
+    #     pixels = renderer.render()
+    #     frames.append(pixels)
+
+    #     media
+
+    # media.show_video(frames, fps=framerate)
     return
 
 

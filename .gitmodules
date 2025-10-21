@@ -1,3 +1,6 @@
 [submodule "unitree-robot-models"]
 	path = external/unitree-robot-models
 	url = https://huggingface.co/datasets/unitreerobotics/unitree_model
+[submodule "external/unitree-mujoco"]
+	path = external/unitree-mujoco
+	url = https://github.com/unitreerobotics/unitree_mujoco.git
