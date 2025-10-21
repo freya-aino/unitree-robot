@@ -24,17 +24,22 @@ def _():
 
 
 @app.cell
-def _(Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep):
+def _(getcwd):
+    MJCF_SCENE_PATH = f"{getcwd()}/external/files/scenes/scene.xml"
+    return (MJCF_SCENE_PATH,)
+
+
+@app.cell
+def _(Lock, MJCF_SCENE_PATH, Thread, mj, mujoco, perf_counter, sleep):
     lock = Lock()
 
-    mj_model = mj.MjModel.from_xml_path(f"{getcwd()}/external/files/scenes/scene.xml")
-    # mj_model = mj.MjModel.from_xml_path(f"{getcwd()}/external/unitree-mujoco/unitree_robots/go2/scene.xml")
+    mj_model = mj.MjModel.from_xml_path(MJCF_SCENE_PATH)
     mj_data = mj.MjData(mj_model)
 
 
     mj_viewer = mj.viewer.launch_passive(mj_model, mj_data)
 
-    # mj.mj_resetData(mj_model, mj_data)
+    mj.mj_resetData(mj_model, mj_data)
     mj_model.opt.timestep = 1/200
 
     sleep(0.2)
@@ -70,11 +75,11 @@ def _(Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep):
 
 
 @app.cell
-def _(getcwd, mjcf):
-    brax_system = mjcf.load_mjmodel(f"{getcwd()}/external/unitree-mujoco/unitree_robots/go2/scene.xml")
+def _(MJCF_SCENE_PATH, mjcf):
+    brax_system = mjcf.load_mjmodel(MJCF_SCENE_PATH)
 
     # brax_system.actuator_acc0
-    brax_system.sensor()
+    # brax_system.sensor()
     return
 
 
