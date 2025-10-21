@@ -7,6 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import jax
+    import brax
 
     import mujoco as mj
     import polars as pl
@@ -17,15 +18,16 @@ def _():
     from mujoco import mjx
     from time import sleep, perf_counter
     from os import getcwd
+
     from threading import Lock, Thread
-    return Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep
+    return Lock, Thread, getcwd, mj, mjcf, mujoco, perf_counter, sleep
 
 
 @app.cell
 def _(Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep):
     lock = Lock()
 
-    mj_model = mj.MjModel.from_xml_path(f"{getcwd()}\\external\\files\\scenes\\scene.xml")
+    mj_model = mj.MjModel.from_xml_path(f"{getcwd()}/external/files/scenes/scene.xml")
     # mj_model = mj.MjModel.from_xml_path(f"{getcwd()}/external/unitree-mujoco/unitree_robots/go2/scene.xml")
     mj_data = mj.MjData(mj_model)
 
@@ -68,45 +70,19 @@ def _(Lock, Thread, getcwd, mj, mujoco, perf_counter, sleep):
 
 
 @app.cell
-def _():
+def _(getcwd, mjcf):
+    brax_system = mjcf.load_mjmodel(f"{getcwd()}/external/unitree-mujoco/unitree_robots/go2/scene.xml")
+
+    # brax_system.actuator_acc0
+    brax_system.sensor()
     return
 
 
 @app.cell
 def _():
-    # mj_model = mj.MjModel.from_xml_string(xml)
-    # mj_data = mj.MjData(mj_model)
-    # renderer = mj.Renderer(mj_model)
+    from unitree_robot.common.controler import XboxController
 
-    # mjx_model = mjx.put_model(mj_model)
-    # mjx_data = mjx.put_data(mj_model, mj_data)
-
-
-    # # enable joint visualization option:
-    # scene_option = mj.MjvOption()
-    # scene_option.flags[mj.mjtVisFlag.mjVIS_JOINT] = True
-
-    # duration = 3.8  # (seconds)
-    # framerate = 60  # (Hz)
-
-
-    # jit_step = jax.jit(mjx.step)
-
-    # frames = []
-    # mj.mj_resetData(mj_model, mj_data)
-
-    # while mjx_data.time < duration:
-    #   mjx_data = jit_step(mjx_model, mjx_data)
-    #   if len(frames) < mjx_data.time * framerate:
-
-    #     mj_data = mjx.get_data(mj_model, mjx_data)
-    #     renderer.update_scene(mj_data, scene_option=scene_option)
-    #     pixels = renderer.render()
-    #     frames.append(pixels)
-
-    #     media
-
-    # media.show_video(frames, fps=framerate)
+    XboxController
     return
 
 
