@@ -1,55 +1,81 @@
 import collections
-from datetime import datetime
 import functools
 import math
 import os
 import time
-from typing import Any, Callable, Dict, Optional, Sequence
 
-import brax
+from typing import Any, Callable, Dict, Optional, Sequence
+from datetime import datetime
+
 from brax import envs
 from brax.envs.wrappers import gym as gym_wrapper
 from brax.envs.wrappers import torch as torch_wrapper
 from brax.io import metrics
 from brax.training.agents.ppo import train as ppo
-# import matplotlib.pyplot as plt
+
+import brax
 import numpy as np
-import torch
-from torch import nn
-from torch import optim
+import torch as T
 import torch.nn.functional as F
 
+from torch import nn
+from torch import optim
+
+from pydantic.dataclasses import dataclass
 
 
-class Agent(nn.Module):
+from unitree_robot.common.networks import BasicPolicyValueNetwork
+
+
+@dataclass
+class UnrollData:
+  observation: T.Tensor
+  logits: T.Tensor
+  action: T.Tensor
+  reward: T.Tensor
+  done: T.Tensor
+  truncation: T.Tensor
+
+  @classmethod
+  def initialize_empty(
+    cls, 
+    num_unrolls: int, 
+    unroll_length: int,
+    observation_shape: Sequence[int],
+    action_shape: Sequence[int],
+    reward_shape: Sequence[int], 
+    device: str
+  ):
+    return UnrollData(
+      observation=T.empty(size=[num_unrolls, unroll_length, *observation_shape], device=device),
+      logits=T.empty(size=[num_unrolls, unroll_length, *action_shape], device=device), # TODO this could bei either `action_shape` or `2` (mean, var)
+      action=T.empty(size=[num_unrolls, unroll_length, *action_shape], device=device),
+      reward=T.empty(size=[num_unrolls, unroll_length, *reward_shape], device=device),
+      done=T.empty(size=[num_unrolls, unroll_length], device=device),
+      truncation=T.empty(size=[num_unrolls, unroll_length], device=device), # TODO this has an unclear shape at time moment, specify
+    )
+
+
+class PPOAgent(nn.Module):
+
   """Standard PPO Agent with GAE and observation normalization."""
 
-  def __init__(self,
-               policy_layers: Sequence[int],
-               value_layers: Sequence[int],
-               entropy_cost: float,
-               discounting: float,
-               reward_scaling: float,
-               device: str):
-    super(Agent, self).__init__()
+  def __init__(
+      self,
+      input_size: int, 
+      output_size: int, 
+      network_hidden_size: int, 
+      entropy_cost: float, 
+      discounting: float, 
+      reward_scaling: float, 
+      device: str
+    ):
 
-    policy = []
-    for w1, w2 in zip(policy_layers, policy_layers[1:]):
-      policy.append(nn.Linear(w1, w2))
-      policy.append(nn.SiLU())
-    policy.pop()  # drop the final activation
-    self.policy = nn.Sequential(*policy)
+    super(PPOAgent, self).__init__()
 
-    value = []
-    for w1, w2 in zip(value_layers, value_layers[1:]):
-      value.append(nn.Linear(w1, w2))
-      value.append(nn.SiLU())
-    value.pop()  # drop the final activation
-    self.value = nn.Sequential(*value)
+    self.network = BasicPolicyValueNetwork(input_size, output_size, network_hidden_size)
 
-    self.num_steps = torch.zeros((), device=device)
-    self.running_mean = torch.zeros(policy_layers[0], device=device)
-    self.running_variance = torch.zeros(policy_layers[0], device=device)
+    self.num_steps = T.zeros((), device=device)
 
     self.entropy_cost = entropy_cost
     self.discounting = discounting
@@ -58,77 +84,72 @@ class Agent(nn.Module):
     self.epsilon = 0.3
     self.device = device
 
-
-  @torch.jit.export
+  @T.jit.export
   def dist_create(self, logits):
     """Normal followed by tanh.
 
-    torch.distribution doesn't work with torch.jit, so we roll our own."""
-    loc, scale = torch.split(logits, logits.shape[-1] // 2, dim=-1)
+    T.distribution doesn't work with T.jit, so we roll our own."""
+    loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
     scale = F.softplus(scale) + .001
     return loc, scale
 
-  @torch.jit.export
+  @T.jit.export
   def dist_sample_no_postprocess(self, loc, scale):
-    return torch.normal(loc, scale)
+    return T.normal(loc, scale)
 
-  @classmethod
-  def dist_postprocess(cls, x):
-    return torch.tanh(x)
-
-  @torch.jit.export
+  @T.jit.export
   def dist_entropy(self, loc, scale):
-    log_normalized = 0.5 * math.log(2 * math.pi) + torch.log(scale)
+    log_normalized = 0.5 * math.log(2 * math.pi) + T.log(scale)
     entropy = 0.5 + log_normalized
-    entropy = entropy * torch.ones_like(loc)
-    dist = torch.normal(loc, scale)
+    entropy = entropy * T.ones_like(loc)
+    dist = T.normal(loc, scale)
     log_det_jacobian = 2 * (math.log(2) - dist - F.softplus(-2 * dist))
     entropy = entropy + log_det_jacobian
     return entropy.sum(dim=-1)
 
-  @torch.jit.export
+  @T.jit.export
   def dist_log_prob(self, loc, scale, dist):
     log_unnormalized = -0.5 * ((dist - loc) / scale).square()
-    log_normalized = 0.5 * math.log(2 * math.pi) + torch.log(scale)
+    log_normalized = 0.5 * math.log(2 * math.pi) + T.log(scale)
     log_det_jacobian = 2 * (math.log(2) - dist - F.softplus(-2 * dist))
     log_prob = log_unnormalized - log_normalized - log_det_jacobian
     return log_prob.sum(dim=-1)
 
-  @torch.jit.export
+  @T.jit.export
   def update_normalization(self, observation):
     self.num_steps += observation.shape[0] * observation.shape[1]
     input_to_old_mean = observation - self.running_mean
-    mean_diff = torch.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
+    mean_diff = T.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
     self.running_mean = self.running_mean + mean_diff
     input_to_new_mean = observation - self.running_mean
-    var_diff = torch.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
+    var_diff = T.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
     self.running_variance = self.running_variance + var_diff
 
-  @torch.jit.export
+  @T.jit.export
   def normalize(self, observation):
     variance = self.running_variance / (self.num_steps + 1.0)
-    variance = torch.clip(variance, 1e-6, 1e6)
+    variance = T.clip(variance, 1e-6, 1e6)
     return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
 
-  @torch.jit.export
+  @T.jit.export
   def get_logits_action(self, observation):
     observation = self.normalize(observation)
-    logits = self.policy(observation)
+    logits = self.network.policy_forward(observation)
     loc, scale = self.dist_create(logits)
     action = self.dist_sample_no_postprocess(loc, scale)
     return logits, action
 
-  @torch.jit.export
+  @T.jit.export
   def compute_gae(self, truncation, termination, reward, values, bootstrap_value):
     truncation_mask = 1 - truncation
     # Append bootstrapped value to get [v1, ..., v_t+1]
-    values_t_plus_1 = torch.cat([values[1:], torch.unsqueeze(bootstrap_value, 0)], dim=0)
+    values_t_plus_1 = T.cat([values[1:], T.unsqueeze(bootstrap_value, 0)], dim=0)
     deltas = reward + self.discounting * (
         1 - termination) * values_t_plus_1 - values
     deltas *= truncation_mask
 
-    acc = torch.zeros_like(bootstrap_value)
-    vs_minus_v_xs = torch.zeros_like(truncation_mask)
+    acc = T.zeros_like(bootstrap_value)
+    vs_minus_v_xs = T.zeros_like(truncation_mask)
 
     for ti in range(truncation_mask.shape[0]):
       ti = truncation_mask.shape[0] - ti - 1
@@ -138,49 +159,241 @@ class Agent(nn.Module):
 
     # Add V(x_s) to get v_s.
     vs = vs_minus_v_xs + values
-    vs_t_plus_1 = torch.cat([vs[1:], torch.unsqueeze(bootstrap_value, 0)], 0)
+    vs_t_plus_1 = T.cat([vs[1:], T.unsqueeze(bootstrap_value, 0)], 0)
     advantages = (reward + self.discounting *
                   (1 - termination) * vs_t_plus_1 - values) * truncation_mask
     return vs, advantages
 
-  @torch.jit.export
-  def loss(self, td: Dict[str, torch.Tensor]):
-    observation = self.normalize(td['observation'])
-    policy_logits = self.policy(observation[:-1])
-    baseline = self.value(observation)
-    baseline = torch.squeeze(baseline, dim=-1)
+  @T.jit.export
+  def loss(self, unroll_data: UnrollData):
+    
+    observation = self.normalize(unroll_data.observation)
+    policy_logits = self.network.policy_forward(observation[:-1])
+    baseline = self.network.value_forward(observation)
+    baseline = T.squeeze(baseline, dim=-1)
 
     # Use last baseline value (from the value function) to bootstrap.
     bootstrap_value = baseline[-1]
     baseline = baseline[:-1]
-    reward = td['reward'] * self.reward_scaling
-    termination = td['done'] * (1 - td['truncation'])
+    reward = unroll_data.reward * self.reward_scaling
+    termination = unroll_data.done * (1 - unroll_data.truncation)
 
-    loc, scale = self.dist_create(td['logits'])
-    behaviour_action_log_probs = self.dist_log_prob(loc, scale, td['action'])
+    loc, scale = self.dist_create(unroll_data.logits)
+    behaviour_action_log_probs = self.dist_log_prob(loc, scale, unroll_data.action)
     loc, scale = self.dist_create(policy_logits)
-    target_action_log_probs = self.dist_log_prob(loc, scale, td['action'])
+    target_action_log_probs = self.dist_log_prob(loc, scale, unroll_data.action)
 
-    with torch.no_grad():
+    with T.no_grad():
       vs, advantages = self.compute_gae(
-          truncation=td['truncation'],
-          termination=termination,
-          reward=reward,
-          values=baseline,
-          bootstrap_value=bootstrap_value)
+        truncation=unroll_data.truncation,
+        termination=termination,
+        reward=reward,
+        values=baseline,
+        bootstrap_value=bootstrap_value
+      )
 
-    rho_s = torch.exp(target_action_log_probs - behaviour_action_log_probs)
+    rho_s = T.exp(target_action_log_probs - behaviour_action_log_probs)
     surrogate_loss1 = rho_s * advantages
-    surrogate_loss2 = rho_s.clip(1 - self.epsilon,
-                                 1 + self.epsilon) * advantages
-    policy_loss = -torch.mean(torch.minimum(surrogate_loss1, surrogate_loss2))
+    surrogate_loss2 = rho_s.clip(1 - self.epsilon, 1 + self.epsilon) * advantages
+    policy_loss = -T.mean(T.minimum(surrogate_loss1, surrogate_loss2))
 
     # Value function loss
     v_error = vs - baseline
-    v_loss = torch.mean(v_error * v_error) * 0.5 * 0.5
+    v_loss = T.mean(v_error * v_error) * 0.5 * 0.5
 
     # Entropy reward
-    entropy = torch.mean(self.dist_entropy(loc, scale))
+    entropy = T.mean(self.dist_entropy(loc, scale))
     entropy_loss = self.entropy_cost * -entropy
 
     return policy_loss + v_loss + entropy_loss
+  
+
+
+class Trainer:
+
+  def __init__(
+    self, 
+    device: str,
+    network_hidden_size: int,
+    reward_scaling: float = .1,
+    entropy_cost: float = 1e-2,
+    discounting: float = .97,
+    optimizer_fn=T.optim.AdamW,
+    learning_rate: float = 3e-4,
+  ) -> None:
+    
+    # -- set device
+    if T.cuda.is_available() and "cuda" in self.device:
+      print("Trainer: device set to gpu (cuda) !")
+      self.device = device
+    else:
+      print("Trainer: device set to cpu !")
+      self.device = "cpu"
+
+    # -- create agent
+    self.agent = T.jit.script(
+      PPOAgent(
+        input_size=self.observation_space_shape,
+        output_size=self.action_space_shape,
+        network_hidden_size=network_hidden_size,
+        entropy_cost=entropy_cost, 
+        discounting=discounting, 
+        reward_scaling=reward_scaling, 
+        device=device
+      ).to(device=device)
+    )
+
+    # -- set up optimizer
+    self.otim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
+
+    # -- create environment
+    # env = envs.create(
+    #   env_name, 
+    #   batch_size=batch_size,
+    #   episode_length=episode_length,
+    #   backend='spring'
+    # )
+    # env = gym_wrapper.VectorGymWrapper(env)
+    # automatically convert between jax ndarrays and T tensors:
+    self.env = torch_wrapper.TorchWrapper(
+      None, # env: TODO 
+      device=device
+    )
+    self.env.reset()
+
+    # -- variables
+    self.action_space_shape = self.env.action_space.shape
+    self.observation_space_shape = self.env.observation_space.shape
+    self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
+
+
+  def eval_unroll(self, length):
+    """Return number of episodes and average reward for a single unroll."""
+    observation = self.env.reset()
+    episodes = T.zeros((), device=self.device)
+    episode_reward = T.zeros((), device=self.device)
+    for _ in range(length):
+      _, action = self.agent.get_logits_action(observation)
+      observation, reward, done, _ = self.env.step(action)
+      episodes += T.sum(done)
+      episode_reward += T.sum(reward)
+    return episodes, episode_reward / episodes
+
+  def train_unroll(self, observation, num_unrolls, unroll_length):
+    """Return step data over multple unrolls."""
+    
+    unrolls = UnrollData.initialize_empty(
+      num_unrolls=num_unrolls, 
+      unroll_length=unroll_length,
+      observation_shape=self.observation_space_shape,
+      action_shape=self.action_space_shape,
+      reward_shape=self.reward_shape,
+      device=self.device,
+    )
+
+    for i in range(num_unrolls):
+      for j in range(unroll_length):
+        
+        # decide which action to take depending on the environment observation (robot state)
+        logits, action = self.agent.get_logits_action(observation)
+
+        # take a step in the environment and get its return values like the local reward for taking that action.
+        observation, reward, done, info = self.env.step(action)
+        
+        unrolls.observation[i, j, :] = observation[:]
+        unrolls.logits[i, j, :] = logits[:]
+        unrolls.action[i,j, :] = action[:]
+        unrolls.reward[i, j, :] = reward[:]
+        unrolls.done[i,j] = done
+        unrolls.truncation[i,j] = info['truncation']
+
+    return observation, unrolls
+
+
+  def train(
+      self,
+      device: str,
+      epochs: int = 4,
+      num_updates: int = 10,
+      
+      episode_length: int = 1000,
+      unroll_length: int = 5,
+      num_timesteps: int = 30_000_000,
+      batch_size: int = 2048, # number of parallel environments
+      eval_frequency: int = 10,
+      num_minibatches: int = 32,
+      progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+  ):
+    
+    # env warmup
+    self.env.reset()
+    action = T.zeros(self.action_space_shape).to(device)
+    self.env.step(action)
+
+
+    sps = 0
+    total_steps = 0
+    total_loss = 0
+    # for eval_i in range(eval_frequency + 1):
+    # if progress_fn:
+    #   t = time.time()
+    #   with T.no_grad():
+    #     episode_count, episode_reward = self.eval_unroll(episode_length)
+    #   duration = time.time() - t
+    #   # TODO(brax-team): only count stats from completed episodes
+    #   episode_avg_length = self.env.num_envs * episode_length / episode_count
+    #   eval_sps = self.env.num_envs * episode_length / duration
+    #   progress = {
+    #       'eval/episode_reward': episode_reward,
+    #       'eval/completed_episodes': episode_count,
+    #       'eval/avg_episode_length': episode_avg_length,
+    #       'speed/sps': sps,
+    #       'speed/eval_sps': eval_sps,
+    #       'losses/total_loss': total_loss,
+    #   }
+    #   progress_fn(total_steps, progress)
+
+    # if eval_i == eval_frequency:
+    #   break
+
+    observation = self.env.reset()
+    num_steps = batch_size * num_minibatches * unroll_length
+    num_epochs = num_timesteps // (num_steps * eval_frequency)
+    num_unrolls = batch_size * num_minibatches // self.env.num_envs
+
+    t = time.time()
+    for _ in range(num_epochs):
+      observation, unroll_data = self.train_unroll(observation, num_unrolls, unroll_length)
+
+      # make unroll first
+      def unroll_first(data):
+        data = data.swapaxes(0, 1)
+        return data.reshape([data.shape[0], -1] + list(data.shape[3:]))
+      # unroll_data = sd_map(unroll_first, unroll_data) # TODO: this applies the unroll_first to each eolement in the unroll data
+
+      # update normalization statistics
+      # self.agent.update_normalization(unroll_data.observation)
+
+      for _ in range(num_updates):
+        
+        # shuffle and batch the data
+        with T.no_grad():
+          permutation = T.randperm(unroll_data.observation.shape[1], device=device)
+          def shuffle_batch(data):
+            data = data[:, permutation]
+            data = data.reshape([data.shape[0], num_minibatches, -1] +
+                                list(data.shape[2:]))
+            return data.swapaxes(0, 1)
+          # epoch_td = sd_map(shuffle_batch, unroll_data) # TODO: same as above with sd_map()
+
+        for minibatch_i in range(num_minibatches):
+          # td_minibatch = sd_map(lambda d: d[minibatch_i], epoch_td) # TODO: same as above with sd_map()
+          loss = self.agent.loss(td_minibatch._asdict())
+          
+          self.otim.zero_grad()
+          loss.backward()
+          self.otim.step()
+
+      duration = time.time() - t
+      total_steps += num_epochs * num_steps
+      sps = num_epochs * num_steps / duration
