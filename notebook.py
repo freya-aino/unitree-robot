@@ -26,6 +26,7 @@ def _():
 @app.cell
 def _(getcwd):
     MJCF_SCENE_PATH = f"{getcwd()}/external/files/scenes/scene.xml"
+    # MJCF_SCENE_PATH = f"{getcwd()}/external/mjcf-robot-files/g1/scene.xml"
     return (MJCF_SCENE_PATH,)
 
 
@@ -76,7 +77,7 @@ def _(Lock, MJCF_SCENE_PATH, Thread, mj, mujoco, perf_counter, sleep):
 
 @app.cell
 def _(MJCF_SCENE_PATH, mjcf):
-    brax_system = mjcf.load_mjmodel(MJCF_SCENE_PATH)
+    # brax_system = mjcf.load_mjmodel(MJCF_SCENE_PATH)
 
     # brax_system.actuator_acc0
     # brax_system.sensor()
@@ -85,9 +86,9 @@ def _(MJCF_SCENE_PATH, mjcf):
 
 @app.cell
 def _():
-    from unitree_robot.common.controler import XboxController
+    # from unitree_robot.common.controler import XboxController
 
-    XboxController
+    # XboxController
     return
 
 
