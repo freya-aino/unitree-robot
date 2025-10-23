@@ -1,44 +1,45 @@
+import jax
+import mujoco
+
 from brax import base
 from brax import math
 from brax.envs.base import PipelineEnv, State
 from brax.io import mjcf
 from etils import epath
-import jax
 from jax import numpy as jp
-import mujoco
+from mujoco import mjx
 
 
 class CustomEnv(PipelineEnv):
 
-  def __init__(
-        self,
-        mjcf_path,
-        ctrl_cost_weight=0.5,
-        contact_cost_weight=5e-4,
-        healthy_reward=1.0,
-        terminate_when_unhealthy=True,
-        healthy_z_range=(0.2, 1.0),
-        contact_force_range=(-1.0, 1.0),
-        reset_noise_scale=0.1,
-        backend='generalized',
-        **kwargs
-    ):
-    
-    sys = mjcf.load(mjcf_path)
+  def __init__(self, mjcf_path: str):
 
-    n_frames = 5
+    model = mjcf.load_mjmodel(mjcf_path)
+    sys = mjx.put_model(model)
+    # model = mjx.put_model(sys)
+    # brax_system.actuator_acc0
+    # brax_system.sensor()
 
-    if backend in ['spring', 'positional']:
-      sys = sys.tree_replace({'opt.timestep': 0.005})
-      n_frames = 10
 
-    # if backend == 'mjx':
-    #   sys = sys.tree_replace({
-    #       'opt.solver': mujoco.mjtSolver.mjSOL_NEWTON,
-    #       'opt.disableflags': mujoco.mjtDisableBit.mjDSBL_EULERDAMP,
-    #       'opt.iterations': 1,
-    #       'opt.ls_iterations': 4,
-    #   })
+    # set the action and observation shapes
+    # self.action_size = [12]
+    # self.observation_size = [12, 3]
+
+    # from BarkourEnv from brax mujoco tutorial notebook
+    # # override menagerie params for smoother policy
+    # sys = sys.replace(
+    #     dof_damping=sys.dof_damping.at[6:].set(0.5239),
+    #     actuator_gainprm=sys.actuator_gainprm.at[:, 0].set(35.0),
+    #     actuator_biasprm=sys.actuator_biasprm.at[:, 1].set(-35.0),
+    # )
+
+    sys = sys.tree_replace({
+        'opt.solver': mujoco.mjtSolver.mjSOL_NEWTON,
+        'opt.disableflags': mujoco.mjtDisableBit.mjDSBL_EULERDAMP,
+        "opt.timestep": 1/250,
+        'opt.iterations': 1,
+        'opt.ls_iterations': 4,
+    })
 
     # if backend == 'positional':
     #   sys = sys.replace(
@@ -47,11 +48,11 @@ class CustomEnv(PipelineEnv):
     #       )
     #   )
 
-    kwargs['n_frames'] = kwargs.get('n_frames', n_frames)
+    self._dt = 1/50
 
-    super().__init__(sys=sys, backend=backend, **kwargs)
+    n_frames = self._dt // sys.opt.timestep
 
-    self._reset_noise_scale = reset_noise_scale
+    super().__init__(sys=sys, backend="mjx", n_frames=n_frames)
 
     # self._ctrl_cost_weight = ctrl_cost_weight
     # self._contact_cost_weight = contact_cost_weight

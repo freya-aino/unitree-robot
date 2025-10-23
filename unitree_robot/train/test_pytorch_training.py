@@ -8,8 +8,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 from datetime import datetime
 
 from brax import envs
-from brax.envs.wrappers import gym as gym_wrapper
-from brax.envs.wrappers import torch as torch_wrapper
+# from brax.envs.wrappers import gym as gym_wrapper
 from brax.io import metrics
 from brax.training.agents.ppo import train as ppo
 
@@ -21,20 +20,21 @@ import torch.nn.functional as F
 from torch import nn
 from torch import optim
 
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
 
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 
 
-@dataclass
-class UnrollData:
+class UnrollData(BaseModel):
   observation: T.Tensor
   logits: T.Tensor
   action: T.Tensor
   reward: T.Tensor
   done: T.Tensor
   truncation: T.Tensor
+
+  model_config = ConfigDict(arbitrary_types_allowed=True)
 
   @classmethod
   def initialize_empty(
@@ -206,13 +206,15 @@ class PPOAgent(nn.Module):
     return policy_loss + v_loss + entropy_loss
   
 
+
+
 class Trainer:
 
   def __init__(
     self, 
+    env,
     device: str,
     network_hidden_size: int,
-    nun_parallel_envs: int,
     reward_scaling: float = .1,
     entropy_cost: float = 1e-2,
     discounting: float = .97,
@@ -221,12 +223,17 @@ class Trainer:
   ) -> None:
     
     # -- set device
-    if T.cuda.is_available() and "cuda" in self.device:
+    if T.cuda.is_available() and "cuda" in device:
       print("Trainer: device set to gpu (cuda) !")
       self.device = device
     else:
       print("Trainer: device set to cpu !")
       self.device = "cpu"
+
+    # -- variables
+    self.action_space_shape = env.action_size
+    self.observation_space_shape = env.observation_size
+    self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
 
     # -- create agent
     self.agent = T.jit.script(
@@ -245,24 +252,8 @@ class Trainer:
     self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
 
     # -- create environment
-    # env = envs.create(
-    #   env_name, 
-    #   batch_size=nun_parallel_envs,
-    #   episode_length=episode_length,
-    #   backend='spring'
-    # )
-    # env = gym_wrapper.VectorGymWrapper(env)
-    # automatically convert between jax ndarrays and T tensors:
-    self.env = torch_wrapper.TorchWrapper(
-      None, # env: TODO 
-      device=device
-    )
+    self.env = env
     self.env.reset()
-
-    # -- variables
-    self.action_space_shape = self.env.action_space.shape
-    self.observation_space_shape = self.env.observation_space.shape
-    self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
 
 
   # def eval_unroll(self, length):
@@ -313,15 +304,7 @@ class Trainer:
       device: str,
       epochs: int = 4,
       batch_size: int = 2048,
-
       unroll_length: int = 5,
-
-      num_updates: int = 10,
-      episode_length: int = 1000,
-      num_timesteps: int = 30_000_000,
-      num_minibatches: int = 32,
-
-      # eval_frequency: int = 10,
       progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
   ):
     
@@ -330,6 +313,8 @@ class Trainer:
     action = T.zeros(self.action_space_shape).to(device)
     self.env.step(action)
 
+
+    self.unroll_length = unroll_length
 
     sps = 0
     total_steps = 0
@@ -356,14 +341,14 @@ class Trainer:
     #   break
 
     observation = self.env.reset()
-    num_steps = batch_size * num_minibatches * unroll_length
+    # num_steps = batch_size * num_minibatches * unroll_length
     # num_epochs = num_timesteps // (num_steps * eval_frequency)
-    num_unrolls = batch_size * num_minibatches // self.env.num_envs
+    # num_unrolls = batch_size * num_minibatches // self.env.num_envs
 
     t = time.time()
     for _ in range(epochs):
 
-      observation, unroll_data = self.train_unroll(observation, num_unrolls, unroll_length)
+      observation, unroll_data = self.train_unroll(observation, self.unroll_length, unroll_length)
 
       unroll_data.observation = unroll_data.observation.reshape([
         unroll_data.observation.shape[0] + unroll_data.observation.shape[1],
