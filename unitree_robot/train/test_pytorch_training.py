@@ -57,7 +57,6 @@ class UnrollData:
 
 
 class PPOAgent(nn.Module):
-
   """Standard PPO Agent with GAE and observation normalization."""
 
   def __init__(
@@ -76,7 +75,6 @@ class PPOAgent(nn.Module):
     self.network = BasicPolicyValueNetwork(input_size, output_size, network_hidden_size)
 
     self.num_steps = T.zeros((), device=device)
-
     self.entropy_cost = entropy_cost
     self.discounting = discounting
     self.reward_scaling = reward_scaling
@@ -208,13 +206,13 @@ class PPOAgent(nn.Module):
     return policy_loss + v_loss + entropy_loss
   
 
-
 class Trainer:
 
   def __init__(
     self, 
     device: str,
     network_hidden_size: int,
+    nun_parallel_envs: int,
     reward_scaling: float = .1,
     entropy_cost: float = 1e-2,
     discounting: float = .97,
@@ -244,12 +242,12 @@ class Trainer:
     )
 
     # -- set up optimizer
-    self.otim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
+    self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
 
     # -- create environment
     # env = envs.create(
     #   env_name, 
-    #   batch_size=batch_size,
+    #   batch_size=nun_parallel_envs,
     #   episode_length=episode_length,
     #   backend='spring'
     # )
@@ -267,17 +265,17 @@ class Trainer:
     self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
 
 
-  def eval_unroll(self, length):
-    """Return number of episodes and average reward for a single unroll."""
-    observation = self.env.reset()
-    episodes = T.zeros((), device=self.device)
-    episode_reward = T.zeros((), device=self.device)
-    for _ in range(length):
-      _, action = self.agent.get_logits_action(observation)
-      observation, reward, done, _ = self.env.step(action)
-      episodes += T.sum(done)
-      episode_reward += T.sum(reward)
-    return episodes, episode_reward / episodes
+  # def eval_unroll(self, length):
+  #   """Return number of episodes and average reward for a single unroll."""
+  #   observation = self.env.reset()
+  #   episodes = T.zeros((), device=self.device)
+  #   episode_reward = T.zeros((), device=self.device)
+  #   for _ in range(length):
+  #     _, action = self.agent.get_logits_action(observation)
+  #     observation, reward, done, _ = self.env.step(action)
+  #     episodes += T.sum(done)
+  #     episode_reward += T.sum(reward)
+  #   return episodes, episode_reward / episodes
 
   def train_unroll(self, observation, num_unrolls, unroll_length):
     """Return step data over multple unrolls."""
@@ -314,14 +312,16 @@ class Trainer:
       self,
       device: str,
       epochs: int = 4,
-      num_updates: int = 10,
-      
-      episode_length: int = 1000,
+      batch_size: int = 2048,
+
       unroll_length: int = 5,
+
+      num_updates: int = 10,
+      episode_length: int = 1000,
       num_timesteps: int = 30_000_000,
-      batch_size: int = 2048, # number of parallel environments
-      eval_frequency: int = 10,
       num_minibatches: int = 32,
+
+      # eval_frequency: int = 10,
       progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
   ):
     
@@ -352,47 +352,55 @@ class Trainer:
     #       'losses/total_loss': total_loss,
     #   }
     #   progress_fn(total_steps, progress)
-
     # if eval_i == eval_frequency:
     #   break
 
     observation = self.env.reset()
     num_steps = batch_size * num_minibatches * unroll_length
-    num_epochs = num_timesteps // (num_steps * eval_frequency)
+    # num_epochs = num_timesteps // (num_steps * eval_frequency)
     num_unrolls = batch_size * num_minibatches // self.env.num_envs
 
     t = time.time()
-    for _ in range(num_epochs):
+    for _ in range(epochs):
+
       observation, unroll_data = self.train_unroll(observation, num_unrolls, unroll_length)
 
-      # make unroll first
-      def unroll_first(data):
-        data = data.swapaxes(0, 1)
-        return data.reshape([data.shape[0], -1] + list(data.shape[3:]))
+      unroll_data.observation = unroll_data.observation.reshape([
+        unroll_data.observation.shape[0] + unroll_data.observation.shape[1],
+        -1
+      ])
+      # with a number_ob_unrolls of 30 and a unroll_length of 150 we get a tensor of size [4500, observation_shape]
+
+      # # make unroll first
+      # def unroll_first(unroll_data):
+      #   unroll_data = unroll_data.swapaxes(0, 1)
+      #   return unroll_data.reshape([unroll_data.shape[0], -1] + list(unroll_data.shape[3:]))
       # unroll_data = sd_map(unroll_first, unroll_data) # TODO: this applies the unroll_first to each eolement in the unroll data
+
 
       # update normalization statistics
       # self.agent.update_normalization(unroll_data.observation)
 
-      for _ in range(num_updates):
+      # for _ in range(num_updates):
         
         # shuffle and batch the data
-        with T.no_grad():
-          permutation = T.randperm(unroll_data.observation.shape[1], device=device)
-          def shuffle_batch(data):
-            data = data[:, permutation]
-            data = data.reshape([data.shape[0], num_minibatches, -1] +
-                                list(data.shape[2:]))
-            return data.swapaxes(0, 1)
+        # with T.no_grad():
+        #   permutation = T.randperm(unroll_data.observation.shape[1], device=device)
+        #   def shuffle_batch(data):
+        #     data = data[:, permutation]
+        #     data = data.reshape([data.shape[0], num_minibatches, -1] +
+        #                         list(data.shape[2:]))
+        #     return data.swapaxes(0, 1)
           # epoch_td = sd_map(shuffle_batch, unroll_data) # TODO: same as above with sd_map()
 
-        for minibatch_i in range(num_minibatches):
-          # td_minibatch = sd_map(lambda d: d[minibatch_i], epoch_td) # TODO: same as above with sd_map()
-          loss = self.agent.loss(td_minibatch._asdict())
-          
-          self.otim.zero_grad()
-          loss.backward()
-          self.otim.step()
+        # for minibatch_i in range(num_minibatches):
+        #   # td_minibatch = sd_map(lambda d: d[minibatch_i], epoch_td) # TODO: same as above with sd_map()
+        
+      loss = self.agent.loss(unroll_data)
+
+      self.optim.zero_grad()
+      loss.backward()
+      self.optim.step()
 
       duration = time.time() - t
       total_steps += num_epochs * num_steps

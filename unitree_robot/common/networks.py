@@ -10,7 +10,7 @@ class BasicPolicyValueNetwork(nn.Module):
             nn.ELU(), 
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, output_size), 
-            nn.Tanh(), 
+            nn.ELU(), 
         )
 
         self.value_network = nn.Sequential(
