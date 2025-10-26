@@ -2,29 +2,35 @@ from pathlib import Path
 from brax.io import mjcf
 from brax import envs
 # from brax.envs.wrappers import torch as torch_wrapper
+# from brax.envs.wrappers import gym as gym_wrapper
 
-from unitree_robot.common.cdds import get_all_cdds_topics
-from unitree_robot.common.datastructure import NETWORK_INTERFACE
-from unitree_robot.train.test_pytorch_training import Trainer
-from unitree_robot.train.brax_env import CustomEnv
+
+# from unitree_robot.common.cdds import get_all_cdds_topics
+# from unitree_robot.common.datastructure import NETWORK_INTERFACE
+from unitree_robot.train.environments import Go2BraxEnv, GymGo2Env
 
 
 if __name__ == "__main__":
 
-    # env = envs.get_environment(env_name="humanoid", backend="mjx")
+    MJCF_PATH = "./external/mjcf-robot-files/go2/scene.xml"
+    # MJCF_ASSET_PATH = "./external/mjcf-robot-files/go2/assets/"
 
-    env = CustomEnv(mjcf_path="./external/mjcf-robot-files/go2/scene.xml")
+    # -- brax
+    # sys = mjcf.load(MJCF_PATH)
+    # env = Go2BraxEnv(sys)
+    # print(type(env))
 
-    print(type(env))
+    # -- mjx
+    from mujoco import MjModel, MjData, mjx
+    mj_model = MjModel.from_xml_path(MJCF_PATH)
+    # mj_data = MjData(mj_model)
+    # mjx_model = mjx.put_model(mj_model)
+    # mjx_data = mjx.put_data(mj_model, mj_data)
+    # print(mjx_model.actuator_acc0)
 
-    # env = gym_wrapper.VectorGymWrapper(env)
-    # automatically convert between jax ndarrays and T tensors:
-    # env = torch_wrapper.TorchWrapper(
-    #     env,
-    #     device="cpu"
-    # )
-    
-    Trainer(env, device="cpu", network_hidden_size=128)
+    # -- gym
+    # gym_env = GymGo2Env(MJCF_PATH) # same problem as the MjModel.from_xml_path directly
+    # print(type(gym_env))
     
 
     pass
