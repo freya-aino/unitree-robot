@@ -1,0 +1,54 @@
+# [project]
+# name = "unitree_robot"
+# version = "0.1.0"
+# description = ""
+# authors = [
+#     {name = "freya",email = "freya.aino@pm.me"}
+# ]
+# readme = "README.md"
+# requires-python = "~3.14"
+# dependencies = [
+#     "cyclonedds==0.10.2",
+#     "pydantic (>=2.11.9,<3.0.0)",
+#     "numpy (>=1.26,<2.0)",
+#     "inputs (>=0.5,<0.6)",
+#     "torch (>=2.9.0,<3.0.0)",
+#     "mujoco (>=3.3.7,<4.0.0)",
+# ]
+
+# [tool.poetry.scripts]
+# test = "pytest:main"
+
+# [tool.poetry.group.dev.dependencies]
+# pytest = "^8.4.2"
+# pytest-cov = "^7.0.0"
+# pytest-mock = "^3.15.0"
+# # brax = "^0.13.0"
+# scipy = ">=1.15,<2.0"
+# tqdm = ">=4.67.1,<5.0.0"
+# jedi = "^0.19.2"
+# # nvidia-srl-usd-to-urdf = "^1.0.3"
+# # mujoco-mjx = "^3.3.6"
+# marimo = {extras = ["mcp"], version = "^0.17.0"}
+# polars = "^1.34.0"
+# # mediapy = "^1.2.4"
+# torch = {source = "cuda"}
+# # warp-lang = "^1.9.1"
+# gymnasium = {extras = ["mujoco"], version = "^1.2.1"}
+
+
+
+# [[tool.poetry.source]]
+# name = "cuda"
+# url = "https://download.pytorch.org/whl/cu130"
+# priority = "explicit"
+
+# [[tool.poetry.source]]
+# name = "issac-lab"
+# url = "https://pypi.nvidia.com"
+# priority = "explicit"
+
+
+# [build-system]
+# requires = ["poetry-core>=2.0.0,<3.0.0"]
+# build-backend = "poetry.core.masonry.api"
