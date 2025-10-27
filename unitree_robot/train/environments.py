@@ -4,7 +4,7 @@ import torch as T
 import gymnasium as gym
 
 from os import path
-from typing import Union, Optional, Any
+from typing import Union, Optional, Any, Dict
 # from brax import base
 # from brax import math
 # from brax.envs.base import PipelineEnv, State
@@ -144,6 +144,9 @@ class MujocoEnv(gym.Env):
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
         mujoco.mj_resetData(self.model, self.data)
+        # TODO: apply initial noise
+        # self.set_stat(self.init_qpos, self.init_qvel)
+
         return super().reset(seed=seed, options=options)
 
     def render(self):
@@ -154,18 +157,18 @@ class MujocoEnv(gym.Env):
             self.viewer.close()
             self.viewer = None
 
-    def set_state(self, qpos: NDArray[np.float32], qvel: NDArray[np.float32]):
-        """
-        Set the joints position qpos and velocity qvel of the model. Override this method depending on the MuJoCo bindings used.
-        """
+    # def set_state(self, qpos: NDArray[np.float32], qvel: NDArray[np.float32]):
+    #     """
+    #     Set the joints position qpos and velocity qvel of the model. Override this method depending on the MuJoCo bindings used.
+    #     """
         
-        assert qpos.shape == (self.model.nq,) and qvel.shape == (self.model.nv,)
+    #     assert qpos.shape == (self.model.nq,) and qvel.shape == (self.model.nv,)
 
-        self.data.qpos[:] = np.copy(qpos)
-        self.data.qvel[:] = np.copy(qvel)
-        if self.model.na == 0:
-            self.data.act[:] = None
-        mujoco.mj_forward(self.model, self.data)
+    #     self.data.qpos[:] = np.copy(qpos)
+    #     self.data.qvel[:] = np.copy(qvel)
+    #     if self.model.na == 0:
+    #         self.data.act[:] = None
+    #     mujoco.mj_forward(self.model, self.data)
 
     def do_simulation(self, ctrl: np.ndarray, n_frames: int):
         """
@@ -173,7 +176,13 @@ class MujocoEnv(gym.Env):
         """
         # Check control input is contained in the action space
         assert ctrl.shape == self.action_space.shape, "Action dimension mismatch"
-        
+
+        # Check controll input between -1, 1
+        assert ~((ctrl > 1) | (ctrl < -1)).any(), "control signal needs to be between -1, 1"
+
+        # self.action_space * ctrl
+
+
         # -- step mujoco simulation
         self.data.ctrl[:] = ctrl
         mujoco.mj_step(self.model, self.data, nstep=self.sim_frames_per_step)
@@ -228,9 +237,10 @@ class Go2Env(MujocoEnv):
             'RR_hip_pos', 'RR_hip_torque', 'RR_hip_vel', 
             'RR_thigh_pos', 'RR_thigh_torque', 'RR_thigh_vel', 
             'frame_pos', 'frame_vel', 
-            'imu_acc', 'imu_gyro', 'imu_quat'
+            'imu_acc', 
+            'imu_gyro', 
+            # 'imu_quat'
         ]
-
 
         # self.action_space_size = len(self.actuator_names)
         # self.observation_space_size = len(self.sensor_names)
@@ -241,16 +251,19 @@ class Go2Env(MujocoEnv):
             seed=seed
         )
 
+
         super().__init__(
             model_path=model_path,
             sim_frames_per_step=sim_frames_per_step,
             observation_space=observation_space,
-            # render_mode="human" # TODO: figure out what human means
         )
 
-    def get_sensor_state(self):
+
+    def get_sensor_state_dict(self) -> Dict[str, NDArray[np.float32]]:
         return {n: self.data.sensor(n).data for n in self.sensor_names}
         
+    def get_sensor_state_array(self) -> NDArray[np.float32]:
+        return np.concatenate([self.data.sensor(n).data for n in self.sensor_names], dtype=np.float32)
 
 
 # class GymGo2Env(MujocoEnv, EzPickle):
