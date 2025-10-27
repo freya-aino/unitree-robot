@@ -53,3 +53,4 @@ CATKIN_IGNORE
 # python
 dist/
 __marimo__/
+*.ipynb_checkpoints/*
