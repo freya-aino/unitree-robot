@@ -38,6 +38,7 @@ polars = "^1.34.0"
 mediapy = "^1.2.4"
 torch = {source = "cuda"}
 jupyterlab = "^4.4.10"
+squaternion = "^2025.3.2"
 
 [tool.poetry.group.train.dependencies]
 brax = "^0.13.0"

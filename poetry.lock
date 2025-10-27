@@ -4977,6 +4977,18 @@ files = [
 ]
 
 [[package]]
+name = "squaternion"
+version = "2025.3.2"
+description = "Some simple functions for quaternion math"
+optional = false
+python-versions = ">=3.9"
+groups = ["dev"]
+files = [
+    {file = "squaternion-2025.3.2-py3-none-any.whl", hash = "sha256:850569dd158fdf955b70e34ca0d9184b6eff328758d6208211260667dd92da5a"},
+    {file = "squaternion-2025.3.2.tar.gz", hash = "sha256:22a7c00adf6a4ac6683d374847e34094170f22d37c9d40761e779cbaf48b04dd"},
+]
+
+[[package]]
 name = "sse-starlette"
 version = "3.0.2"
 description = "SSE plugin for Starlette"
@@ -5755,4 +5767,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "~3.10"
-content-hash = "890c22491f2a4b2bf9020cc91bf80a30a1afeb60b8b3b6af2232afa6eec0ccbd"
+content-hash = "53665f13e6a27c6ff216e30b3e03a7945e9b27e12daf82f068f4c9cba715c26b"
