@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, Optional
 
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 from unitree_robot.common.datastructure import UnrollData
-
+from unitree_robot.train.environments import MujocoEnv
 
 class PPOAgent(nn.Module):
   """Standard PPO Agent with GAE and observation normalization."""
@@ -178,7 +178,7 @@ class Trainer:
 
   def __init__(
     self, 
-    env: PipelineEnv,
+    env: MujocoEnv,
     device: str,
     network_hidden_size: int,
     reward_scaling: float = .1,
@@ -198,8 +198,8 @@ class Trainer:
       self.device = "cpu"
 
     # -- variables
-    self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
-    self.env = TorchWrapper(env, device=device)
+    # self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
+    # self.env = TorchWrapper(env, device=device)
     # self.env.reset(jax.random.key(rng_seed))
     
     
