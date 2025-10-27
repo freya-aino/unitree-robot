@@ -142,15 +142,8 @@ class MujocoEnv(gym.Env):
     #     Reset MuJoCo simulation data structures, mjModel and mjData.
     #     """
 
-    def reset(
-        self, 
-        *,
-        seed: int | None = None, 
-        options: dict[str, Any] | None = None
-    ) -> tuple[Any, dict[str, Any]]:
-
+    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
         mujoco.mj_resetData(self.model, self.data)
-
         return super().reset(seed=seed, options=options)
 
     def render(self):
@@ -199,10 +192,9 @@ class MujocoEnv(gym.Env):
     #     """Return the cartesian position of a body frame"""
     #     return self.data.body(body_name).xpos
 
-    def get_state_vector(self):
-        """Return the position and velocity joint states of the model"""
-        return self.data.qpos, self.data.qvel
-
+    # def get_state_vector(self):
+    #     """Return the position and velocity joint states of the model"""
+    #     return self.data.qpos, self.data.qvel
 
 
 class Go2Env(MujocoEnv):
@@ -256,7 +248,9 @@ class Go2Env(MujocoEnv):
             # render_mode="human" # TODO: figure out what human means
         )
 
-
+    def get_sensor_state(self):
+        return {n: self.data.sensor(n).data for n in self.sensor_names}
+        
 
 
 # class GymGo2Env(MujocoEnv, EzPickle):
