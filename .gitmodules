@@ -1,0 +1,3 @@
+[submodule "external/mujoco_mangerie"]
+	path = external/mujoco_mangerie
+	url = https://github.com/freya-aino/mujoco_menagerie.git
