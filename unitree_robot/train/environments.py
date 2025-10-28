@@ -1,22 +1,24 @@
 import mujoco
-from numpy.typing import NDArray
 import torch as T
 import gymnasium as gym
+import quaternion
 
 from os import path
 from typing import Union, Optional, Any, Dict
-# from brax import base
-# from brax import math
-# from brax.envs.base import PipelineEnv, State
-# from brax.io import mjcf
-# from brax.envs.wrappers.torch import TorchWrapper
+from numpy.typing import NDArray
 # from jax import numpy as jnp
 
 # from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
-from gymnasium.spaces import Space, Box
-from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer, WindowViewer
+from gymnasium import spaces
+# from gymnasium.envs.mujoco.mujoco_rendering import WindowViewer
+from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 
 import numpy as np
+import scipy
+
+from scipy.spatial.transform import Rotation as R
+
+from unitree_robot.train.experiments import Experiment
 
 # from gym.envs.registration import load_env_plugins
 # from gym.envs.registration import make, register, registry, spec
@@ -28,14 +30,40 @@ import numpy as np
 #     entry_point="unitree_robot.training.environments:Go2Env"
 # )
 
+
 DEFAULT_CAMERA_CONFIG = {
     "trackbodyid": 1,
     "distance": 4.0,
-    "lookat": np.array((0.0, 0.0, 2.0)),
+    # "lookat": np.array((0.0, 0.0, 2.0)),
     "elevation": -20.0,
 }
 
-DEFAULT_SIZE = 480
+def look_at_rotation(eye, target, world_up=np.array([0., 0., 1.])):
+    """
+    Returns a scipy Rotation that points the –Z camera axis toward `target`
+    while keeping `world_up` as the camera’s up direction (no roll).
+    """
+    # 1️⃣ Forward direction (camera looks down its –Z axis)
+    forward = target - eye
+    forward /= np.linalg.norm(forward)                # normalize
+
+    # 2️⃣ Right vector = world_up × forward  (ensures orthogonality)
+    right = np.cross(world_up, forward)
+    if np.allclose(right, 0):
+        # world_up is colinear with forward → pick another up vector
+        world_up = np.array([0., 0., 1.])
+        right = np.cross(world_up, forward)
+    right /= np.linalg.norm(right)
+
+    # 3️⃣ True up = forward × right  (re‑orthogonalizes the up direction)
+    true_up = np.cross(forward, right)
+
+    # 4️⃣ Assemble rotation matrix whose columns are the camera axes:
+    #    [right, true_up, -forward]  (because OpenGL‑style camera looks −Z)
+    rot_mat = np.column_stack((right, true_up, -forward))
+
+    # 5️⃣ Convert to a scipy Rotation object
+    return rot_mat
 
 
 class MujocoEnv(gym.Env):
@@ -43,32 +71,24 @@ class MujocoEnv(gym.Env):
 
     def __init__(
         self,
-        model_path,
+        model_path: str,
+        experiment: Experiment,
         sim_frames_per_step: int,
-        observation_space: Space,
-        # render_mode: Optional[str] = None,
-        width: int = DEFAULT_SIZE,
-        height: int = DEFAULT_SIZE,
-        camera_id: Optional[int] = None,
-        camera_name: Optional[str] = None,
+        observation_space: spaces.Space,
+        camera_name: str,
+        width: int = 1920,
+        height: int = 1080,
     ):
         
-        # -- variables
-        self.width = width
-        self.height = height
-        self.sim_frames_per_step = sim_frames_per_step
-
-
         # -- load mujoco model
         self.model_path = model_path
         assert path.exists(self.model_path), f"File {self.model_path} does not exist"
         
         self.model = mujoco.MjModel.from_xml_path(self.model_path)
         # MjrContext will copy model.vis.global_.off* to con.off*
-        self.model.vis.global_.offwidth = self.width
-        self.model.vis.global_.offheight = self.height
+        # self.model.vis.global_.offwidth = self.width
+        # self.model.vis.global_.offheight = self.height
         self.data = mujoco.MjData(self.model)
-
 
         # -- visualization
         # self.viewer = WindowViewer(model=self.model, data=self.data, width=self.width, height=self.height)
@@ -78,38 +98,31 @@ class MujocoEnv(gym.Env):
         #     self.model,
         #     self.data
         # )
-        from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
         self.viewer = MujocoRenderer(
-            self.model, 
-            self.data, 
-            DEFAULT_CAMERA_CONFIG,
-            width,
-            height,
-            # camera_id=camera_id,
-            # camera_name=camera_name
+            model=self.model, 
+            data=self.data, 
+            default_cam_config=DEFAULT_CAMERA_CONFIG,
+            width=width,
+            height=height,
+            camera_name=camera_name,
         )
 
         # -- set relevant control spaces, observation spaces and mujoco data
         self.observation_space = observation_space
-        self._set_action_space()
-        
+        ctrl_range = self.model.actuator_ctrlrange.copy().astype(np.float32)
+        low, high = ctrl_range.T
+        self.action_space = spaces.Box(low=low, high=high, dtype=np.float32)
+
         self.init_qpos = self.data.qpos.ravel().copy()
         self.init_qvel = self.data.qvel.ravel().copy()
 
-
-
-        # -- TODO: there is probably a way to simplify this
-        # assert self.metadata["render_modes"] == [
-        #     "human",
-        #     "rgb_array",
-        #     "depth_array",
-        # ], self.metadata["render_modes"]
-        # assert (
-        #     int(np.round(1.0 / self.dt)) == self.metadata["render_fps"]
-        # ), f'Expected value: {int(np.round(1.0 / self.dt))}, Actual value: {self.metadata["render_fps"]}'
-
+        
+        # -- variables
+        self.width = width
+        self.height = height
+        self.sim_frames_per_step = sim_frames_per_step
         self.camera_name = camera_name
-        self.camera_id = camera_id
+        self.experiment = experiment
 
         super().__init__()
 
@@ -117,53 +130,55 @@ class MujocoEnv(gym.Env):
     def dt(self):
         return self.model.opt.timestep * self.sim_frames_per_step
 
-    def _set_action_space(self):
-        bounds = self.model.actuator_ctrlrange.copy().astype(np.float32)
-        low, high = bounds.T
-        self.action_space = Box(low=low, high=high, dtype=np.float32)
-        return self.action_space
-
-    # methods to override:
-    # ----------------------------
-
-    # def reset_model(self):
-    #     """
-    #     Reset the robot degrees of freedom (qpos and qvel).
-    #     Implement this in each subclass.
-    #     """
-    #     raise NotImplementedError
-
-    # def _reset_simulation(
-    #     self,
-    #     seed: Optional[int] = None,
-    #     options: Optional[dict] = None,
-    # ):
-    #     """
-    #     Reset MuJoCo simulation data structures, mjModel and mjData.
-    #     """
-
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
         mujoco.mj_resetData(self.model, self.data)
         # TODO: apply initial noise
         # self.set_stat(self.init_qpos, self.init_qvel)
-
         return super().reset(seed=seed, options=options)
 
-    def render(self):
+
+    def render(self, follow_body_name: str, cam_offset: NDArray[np.float32]):
+
+        # target_pos = self.get_body_position(follow_body_name)
+        # cam_pos = target_pos + cam_offset
+        # cam_rot = lookat(from_=cam_pos, to_=target_pos)
+
+        # cam_quat = lookat(from_=cam_pos, to_=cam_pos+ np.array([-1, 1, 1]))
+        # cam_quat = lookat(from_=cam_pos, to_=np.array([0, 0, 0]))
+        # cam_quat = lookat(from_=cam_pos, to_=target_pos)
+
+
+        # print(cam_pos, target_pos)
+
+        # -- set camera position
+        # self.data.camera(self.camera_name).xpos = cam_pos
+
+
+        # -- set lookat rotation
+        # self.data.camera(self.camera_name).xmat[:] = look_at_rotation(cam_pos, target_pos).flatten()
+
+        # -- render
         self.viewer.render("human")
+
+
+    def get_observation(self):
+        return self.observation_space # TODO: unclear how this should be abstracted in a geneal purpose mujoco class
 
     def close(self):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
 
+    def step(self, action: Any, n_frames: int):
+        self.do_simulation(ctrl=action, n_frames=n_frames)
+        return self.experiment.calculate_loss(self.data)
+        # return  super().step() # TODO: dont know how important the step() function is
+
     # def set_state(self, qpos: NDArray[np.float32], qvel: NDArray[np.float32]):
     #     """
     #     Set the joints position qpos and velocity qvel of the model. Override this method depending on the MuJoCo bindings used.
     #     """
-        
     #     assert qpos.shape == (self.model.nq,) and qvel.shape == (self.model.nv,)
-
     #     self.data.qpos[:] = np.copy(qpos)
     #     self.data.qvel[:] = np.copy(qvel)
     #     if self.model.na == 0:
@@ -177,12 +192,6 @@ class MujocoEnv(gym.Env):
         # Check control input is contained in the action space
         assert ctrl.shape == self.action_space.shape, "Action dimension mismatch"
 
-        # Check controll input between -1, 1
-        assert ~((ctrl > 1) | (ctrl < -1)).any(), "control signal needs to be between -1, 1"
-
-        # self.action_space * ctrl
-
-
         # -- step mujoco simulation
         self.data.ctrl[:] = ctrl
         mujoco.mj_step(self.model, self.data, nstep=self.sim_frames_per_step)
@@ -192,14 +201,12 @@ class MujocoEnv(gym.Env):
         # See https://github.com/openai/gym/issues/1541
         mujoco.mj_rnePostConstraint(self.model, self.data)
 
-
         # # TODO: I think for renderer, not sure
         # mujoco.mjv_updateScene(self.model, self.data)
 
-
-    # def get_body_com(self, body_name):
-    #     """Return the cartesian position of a body frame"""
-    #     return self.data.body(body_name).xpos
+    def get_body_position(self, body_name):
+        """Return the cartesian position of a body frame"""
+        return self.data.body(body_name).xpos
 
     # def get_state_vector(self):
     #     """Return the position and velocity joint states of the model"""
@@ -214,6 +221,7 @@ class Go2Env(MujocoEnv):
         model_path: str,
         sim_frames_per_step: int,
         seed: int,
+        experiment: Experiment,
     ):
         
         self.actuator_names = [
@@ -242,28 +250,29 @@ class Go2Env(MujocoEnv):
             # 'imu_quat'
         ]
 
-        # self.action_space_size = len(self.actuator_names)
-        # self.observation_space_size = len(self.sensor_names)
         # TODO
-        observation_space = Space(
+        observation_space = spaces.Space(
             shape = [len(self.sensor_names)],
             dtype=np.float32,
             seed=seed
         )
 
-
         super().__init__(
             model_path=model_path,
             sim_frames_per_step=sim_frames_per_step,
             observation_space=observation_space,
+            camera_name="main",
+            experiment=experiment
         )
-
 
     def get_sensor_state_dict(self) -> Dict[str, NDArray[np.float32]]:
         return {n: self.data.sensor(n).data for n in self.sensor_names}
         
     def get_sensor_state_array(self) -> NDArray[np.float32]:
         return np.concatenate([self.data.sensor(n).data for n in self.sensor_names], dtype=np.float32)
+
+    def render(self, follow_body_name: str = "base", cam_offset: NDArray[np.float32] = np.array([5.0, 0.0, 5.0])):
+        return super().render(follow_body_name=follow_body_name, cam_offset=cam_offset)
 
 
 # class GymGo2Env(MujocoEnv, EzPickle):

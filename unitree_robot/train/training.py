@@ -38,7 +38,7 @@ class PPOAgent(nn.Module):
       device: str
     ):
 
-    super(PPOAgent, self).__init__()
+    super().__init__()
 
     self.network = BasicPolicyValueNetwork(input_size, output_size, network_hidden_size)
 
@@ -50,7 +50,7 @@ class PPOAgent(nn.Module):
     self.epsilon = 0.3
     self.device = device
 
-  @T.jit.export
+
   def dist_create(self, logits):
     """Normal followed by tanh.
 
@@ -59,11 +59,9 @@ class PPOAgent(nn.Module):
     scale = F.softplus(scale) + .001
     return loc, scale
 
-  @T.jit.export
   def dist_sample_no_postprocess(self, loc, scale):
     return T.normal(loc, scale)
 
-  @T.jit.export
   def dist_entropy(self, loc, scale):
     log_normalized = 0.5 * math.log(2 * math.pi) + T.log(scale)
     entropy = 0.5 + log_normalized
@@ -73,7 +71,6 @@ class PPOAgent(nn.Module):
     entropy = entropy + log_det_jacobian
     return entropy.sum(dim=-1)
 
-  @T.jit.export
   def dist_log_prob(self, loc, scale, dist):
     log_unnormalized = -0.5 * ((dist - loc) / scale).square()
     log_normalized = 0.5 * math.log(2 * math.pi) + T.log(scale)
@@ -81,31 +78,27 @@ class PPOAgent(nn.Module):
     log_prob = log_unnormalized - log_normalized - log_det_jacobian
     return log_prob.sum(dim=-1)
 
-  @T.jit.export
-  def update_normalization(self, observation):
-    self.num_steps += observation.shape[0] * observation.shape[1]
-    input_to_old_mean = observation - self.running_mean
-    mean_diff = T.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
-    self.running_mean = self.running_mean + mean_diff
-    input_to_new_mean = observation - self.running_mean
-    var_diff = T.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
-    self.running_variance = self.running_variance + var_diff
+  # def update_normalization(self, observation):
+  #   self.num_steps += observation.shape[0] * observation.shape[1]
+  #   input_to_old_mean = observation - self.running_mean
+  #   mean_diff = T.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
+  #   self.running_mean = self.running_mean + mean_diff
+  #   input_to_new_mean = observation - self.running_mean
+  #   var_diff = T.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
+  #   self.running_variance = self.running_variance + var_diff
 
-  @T.jit.export
-  def normalize(self, observation):
-    variance = self.running_variance / (self.num_steps + 1.0)
-    variance = T.clip(variance, 1e-6, 1e6)
-    return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
+  # def normalize(self, observation):
+  #   variance = self.running_variance / (self.num_steps + 1.0)
+  #   variance = T.clip(variance, 1e-6, 1e6)
+  #   return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
 
-  @T.jit.export
   def get_logits_action(self, observation):
-    observation = self.normalize(observation)
+    # observation = self.normalize(observation)
     logits = self.network.policy_forward(observation)
     loc, scale = self.dist_create(logits)
     action = self.dist_sample_no_postprocess(loc, scale)
     return logits, action
 
-  @T.jit.export
   def compute_gae(self, truncation, termination, reward, values, bootstrap_value):
     truncation_mask = 1 - truncation
     # Append bootstrapped value to get [v1, ..., v_t+1]
@@ -130,10 +123,10 @@ class PPOAgent(nn.Module):
                   (1 - termination) * vs_t_plus_1 - values) * truncation_mask
     return vs, advantages
 
-  @T.jit.export
   def loss(self, unroll_data: UnrollData):
     
-    observation = self.normalize(unroll_data.observation)
+    # observation = self.normalize(unroll_data.observation)
+    observation = unroll_data.observation
     policy_logits = self.network.policy_forward(observation[:-1])
     baseline = self.network.value_forward(observation)
     baseline = T.squeeze(baseline, dim=-1)
@@ -179,8 +172,10 @@ class Trainer:
   def __init__(
     self, 
     env: MujocoEnv,
+    # experiment: Experiment,
     device: str,
     network_hidden_size: int,
+    frames_simulated_per_step: int = 5,
     reward_scaling: float = .1,
     entropy_cost: float = 1e-2,
     discounting: float = .97,
@@ -198,23 +193,26 @@ class Trainer:
       self.device = "cpu"
 
     # -- variables
-    # self.reward_shape = [1] # TODO: this is just for a simple summed reward, this could be a vector, calculate the shape here in the __init__
-    # self.env = TorchWrapper(env, device=device)
-    # self.env.reset(jax.random.key(rng_seed))
-    
-    
+    self.env = env
+    assert self.env.observation_space.shape, "observation space dose not seem to be initialized"
+    assert self.env.action_space.shape, "observation space dose not seem to be initialized"
+    self.observation_space_shape = self.env.observation_space.shape
+    self.action_space_shape = self.env.action_space.shape
+    # self.reward_shape = experiment.reward_shape # TODO
+    self.reward_shape = [1] # TODO
+    self.frames_simulated_per_step = frames_simulated_per_step
+
+
     # -- create agent
-    self.agent = T.jit.script(
-      PPOAgent(
-        input_size=self.env.observation_space_size,
-        output_size=self.env.action_space_size,
+    self.agent = PPOAgent(
+        input_size=self.observation_space_shape[0],
+        output_size=self.action_space_shape[0],
         network_hidden_size=network_hidden_size,
         entropy_cost=entropy_cost, 
         discounting=discounting, 
         reward_scaling=reward_scaling, 
         device=device
-      ).to(device=device)
-    )
+    ).to(device=device)
 
     # -- set up optimizer
     self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
@@ -251,32 +249,29 @@ class Trainer:
         logits, action = self.agent.get_logits_action(observation)
 
         # take a step in the environment and get its return values like the local reward for taking that action.
-        observation, reward, done, info = self.env.step(action)
+        losses = self.env.step(action, n_frames=self.frames_simulated_per_step)
         
         unrolls.observation[i, j, :] = observation[:]
         unrolls.logits[i, j, :] = logits[:]
         unrolls.action[i,j, :] = action[:]
-        unrolls.reward[i, j, :] = reward[:]
-        unrolls.done[i,j] = done
-        unrolls.truncation[i,j] = info['truncation']
+        unrolls.reward[i, j, :] = -losses[:]
+        # unrolls.done[i,j] = done
 
     return observation, unrolls
 
-
   def train(
       self,
-      device: str,
       epochs: int = 4,
       batch_size: int = 2048,
       unroll_length: int = 5,
+      sim_steps_per_step: int = 5,
       progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
   ):
     
     # env warmup
     self.env.reset()
-    action = T.zeros(self.env.action_space_size).to(device)
-    self.env.step(action)
-
+    action = T.zeros(self.action_space_shape).to(self.device)
+    self.env.step(action, n_frames=sim_steps_per_step)
 
     self.unroll_length = unroll_length
 
@@ -309,7 +304,7 @@ class Trainer:
     # num_epochs = num_timesteps // (num_steps * eval_frequency)
     # num_unrolls = batch_size * num_minibatches // self.env.num_envs
 
-    t = time.time()
+    # t = time.time()
     for _ in range(epochs):
 
       observation, unroll_data = self.train_unroll(observation, self.unroll_length, unroll_length)
@@ -351,6 +346,4 @@ class Trainer:
       loss.backward()
       self.optim.step()
 
-      duration = time.time() - t
-      total_steps += num_epochs * num_steps
-      sps = num_epochs * num_steps / duration
+      # duration = time.time() - t

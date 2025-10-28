@@ -7,5 +7,7 @@ class Experiment(ABC):
         pass
 
 
+    def calculate_loss(self):
+        pass
 
 
