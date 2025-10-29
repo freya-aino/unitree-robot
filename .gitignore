@@ -54,3 +54,4 @@ CATKIN_IGNORE
 dist/
 __marimo__/
 *.ipynb_checkpoints/*
+.idea
