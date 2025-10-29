@@ -1,34 +1,25 @@
 import mujoco
 import torch as T
 import gymnasium as gym
-import quaternion
-
 from os import path
-from typing import Union, Optional, Any, Dict
-from numpy.typing import NDArray
-# from jax import numpy as jnp
-
+from numpy import float32 as np_float32
+from typing import Any, Dict
 from gymnasium import spaces
-# from gymnasium.envs.mujoco.mujoco_rendering import WindowViewer
 from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from mujoco import MjData, MjModel
 
-import numpy as np
-import scipy
 
+# TODO
 from scipy.spatial.transform import Rotation as R
-
 from unitree_robot.train.experiments import Experiment
-
 # from gym.envs.registration import load_env_plugins
 # from gym.envs.registration import make, register, registry, spec
-
 # load_env_plugins()
-
 # register(
 #     "unitree-go2-standing",
 #     entry_point="unitree_robot.training.environments:Go2Env"
 # )
+
 
 # DEFAULT_CAMERA_CONFIG = {
 #     "trackbodyid": 1,
@@ -61,9 +52,6 @@ class MujocoEnv(gym.Env):
         assert path.exists(self.model_path), f"File {self.model_path} does not exist"
         
         self.model = MjModel.from_xml_path(self.model_path)
-        # MjrContext will copy model.vis.global_.off* to con.off*
-        # self.model.vis.global_.offwidth = self.width
-        # self.model.vis.global_.offheight = self.height
         self.data = MjData(self.model)
 
         # -- visualization
@@ -79,9 +67,9 @@ class MujocoEnv(gym.Env):
 
         # -- set relevant control spaces, observation spaces and mujoco data
         # self.observation_space = observation_space
-        ctrl_range = self.model.actuator_ctrlrange.copy().astype(np.float32)
+        ctrl_range = self.model.actuator_ctrlrange.copy().astype(np_float32)
         low, high = ctrl_range.T
-        self.action_space = spaces.Box(low=low, high=high, dtype=np.float32)
+        self.action_space = spaces.Box(low=low, high=high, dtype=np_float32)
 
         self.init_qpos = self.data.qpos.ravel().copy()
         self.init_qvel = self.data.qvel.ravel().copy()
@@ -117,7 +105,7 @@ class MujocoEnv(gym.Env):
             self.viewer.close()
             self.viewer = None
 
-    def step(self, action: Any) -> tuple[NDArray[np.float32], Dict[str, NDArray]]:
+    def step(self, action: T.Tensor) -> tuple[T.Tensor, Dict[str, T.Tensor]]:
         assert self.observation_space, "observation space not set"
 
         self._do_simulation(ctrl=action)
@@ -126,7 +114,7 @@ class MujocoEnv(gym.Env):
         return obs, self.experiment.calculate_reward(mj_data=self.data)
         # return  super().step() # TODO: dont know how important the step() function is
 
-    def _do_simulation(self, ctrl: np.ndarray):
+    def _do_simulation(self, ctrl: T.Tensor):
         """
         Step the simulation n number of frames and applying a control action.
         """
@@ -134,7 +122,7 @@ class MujocoEnv(gym.Env):
         assert ctrl.shape == self.action_space.shape, "Action dimension mismatch"
 
         # -- step mujoco simulation
-        self.data.ctrl[:] = ctrl
+        self.data.ctrl[:] = ctrl.to("cpu").numpy()
         mujoco.mj_step(self.model, self.data, nstep=self.sim_frames_per_step)
         # mujoco.mj_forward(self.model, self.data)
 
@@ -190,149 +178,19 @@ class Go2Env(MujocoEnv):
             experiment=experiment,
         )
 
-    def _set_observation_space(self):
-        self.observation_space = spaces.Space(
-            shape=[len(self.sensor_names)],
-            dtype=np.float32,
-        )
+    # TODO:
+    # def _set_observation_space(self):
+    #     self.observation_space = spaces.Space(
+    #         shape=[len(self.sensor_names)],
+    #         dtype=np.float32,
+    #     )
 
-    def _get_observation(self) -> NDArray[np.float32]:
-        # return self.get_sensor_state_array()
-        return np.random.random(size=[len(self.sensor_names)]).astype(np.float32)
+    def _get_observation(self) -> T.Tensor:
+        return self.get_sensor_state_array()
         # return self.observation_space.sample() # TODO
 
-    def get_sensor_state_dict(self) -> Dict[str, NDArray[np.float32]]:
-        return {n: self.data.sensor(n).data for n in self.sensor_names}
+    def get_sensor_state_dict(self) -> Dict[str, T.Tensor]:
+        return {n: T.Tensor(self.data.sensor(n).data).to(dtype=T.float32) for n in self.sensor_names}
         
-    def get_sensor_state_array(self) -> NDArray[np.float32]:
-        return np.concatenate([self.data.sensor(n).data for n in self.sensor_names], dtype=np.float32)
-
-# class Go2Environment(gym.Env):
-
-#     def __init__(self, mjcf_path: str):
-
-
-#         model = mjcf.load_mjmodel(mjcf_path)
-#         sys = mjx.put_model(model)
-#         sys = TorchWrapper(model, device=device)
-
-#         # # override menagerie params for smoother policy
-#         # sys = sys.replace(
-#         #     dof_damping=sys.dof_damping.at[6:].set(0.5239),
-#         #     actuator_gainprm=sys.actuator_gainprm.at[:, 0].set(35.0),
-#         #     actuator_biasprm=sys.actuator_biasprm.at[:, 1].set(-35.0),
-#         # )
-
-#         sys = sys.tree_replace({
-#             'opt.solver': mujoco.mjtSolver.mjSOL_NEWTON,
-#             'opt.disableflags': mujoco.mjtDisableBit.mjDSBL_EULERDAMP,
-#             "opt.timestep": 1/250,
-#             'opt.iterations': 1,
-#             'opt.ls_iterations': 4,
-#         })
-
-#         self._dt = 1/50
-#         n_frames = self._dt // sys.opt.timestep
-
-#         super().__init__(sys=sys, backend="mjx", n_frames=n_frames)
-
-
-#     def reset(self, rng: jax.Array) -> State:
-#         key, theta_key, qd_key = jax.random.split(rng, 3)
-
-#         theta_init = jax.random.uniform(theta_key, (1,), minval=-0.1, maxval=0.1)[0]
-        
-#         # q structure: [x th]
-#         q_init = jnp.array([0.0, theta_init])
-        
-#         # qd structure: [dx dth]
-#         qd_init = jax.random.uniform(qd_key, (2,), minval=-0.1, maxval=0.1)        
-        
-#         # Initialize State:
-#         pipeline_state = self.pipeline_init(q_init, qd_init)
-
-#         # Initialize Rewards:
-#         reward, done = jnp.zeros(2)
-
-#         # Get observation for RL Algorithm (Input to our neural net):
-#         observation = self.get_observation(pipeline_state)
-
-#         # Metrics:
-#         metrics = {
-#             'rewards': reward,
-#             'observation': observation,
-#         }
-
-#         state = State(
-#             pipeline_state=pipeline_state,
-#             obs=observation,
-#             reward=reward,
-#             done=done,
-#             metrics=metrics,
-#         )
-
-#         return state
-    
-
-#     def step(self, state: State, action: jax.Array) -> State:
-#         """Run one timestep of the environment's dynamics."""
-
-
-#         # -- Get the current pipeline state and do the action to get the next step ss well
-#         pipeline_state_t_0 = state.pipeline_state
-#         assert pipeline_state_t_0 is not None
-#         pipeline_state_t_1 = self.pipeline_step(pipeline_state_t_0, action)
-
-
-#         # velocity = (pipeline_state.x.pos[0] - pipeline_state0.x.pos[0]) / self.dt
-#         # forward_reward = velocity[0]
-
-#         # min_z, max_z = self._healthy_z_range
-#         # is_healthy = jp.where(pipeline_state.x.pos[0, 2] < min_z, 0.0, 1.0)
-#         # is_healthy = jp.where(pipeline_state.x.pos[0, 2] > max_z, 0.0, is_healthy)
-#         # if self._terminate_when_unhealthy:
-#         #   healthy_reward = self._healthy_reward
-#         # else:
-#         #   healthy_reward = self._healthy_reward * is_healthy
-#         # ctrl_cost = self._ctrl_cost_weight * jp.sum(jp.square(action))
-#         # contact_cost = 0.0
-
-#         obs = self._get_obs(pipeline_state_t_1)
-
-#         # -- sum up reward
-#         reward = jp.zeros(1) # TODO
-
-#         # -- check if "done"
-#         done = False
-
-#         # -- update state metrics
-#         state.metrics.update(reward=reward)
-#         # state.metrics.update(
-#         #     reward_forward=forward_reward,
-#         #     reward_survive=healthy_reward,
-#         #     reward_ctrl=-ctrl_cost,
-#         #     reward_contact=-contact_cost,
-#         #     x_position=pipeline_state.x.pos[0, 0],
-#         #     y_position=pipeline_state.x.pos[0, 1],
-#         #     distance_from_origin=math.safe_norm(pipeline_state.x.pos[0]),
-#         #     x_velocity=velocity[0],
-#         #     y_velocity=velocity[1],
-#         #     forward_reward=forward_reward,
-#         # )
-
-#         return state.replace(
-#             pipeline_state=pipeline_state_t_1, 
-#             obs=obs, 
-#             reward=reward, 
-#             # done=done,
-#         )
-
-#     def _get_obs(self, pipeline_state: base.State) -> jax.Array:
-#         """Observe body position and velocities."""
-#         qpos = pipeline_state.q
-#         qvel = pipeline_state.qd
-
-#         # exclude current observaion from state
-#         qpos = pipeline_state.q[2:]
-
-#         return jp.concatenate([qpos] + [qvel])
+    def get_sensor_state_array(self) -> T.Tensor:
+        return T.concat([self.data.sensor(n).data for n in self.sensor_names]).to(dtype=T.float32)

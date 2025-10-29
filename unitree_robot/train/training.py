@@ -1,6 +1,5 @@
 from copy import deepcopy
 
-import numpy as np
 import torch as T
 
 from torch import optim
@@ -90,12 +89,12 @@ class Trainer:
             logits, action = self.agent.get_logits_action(observation=observation)
 
             # take a step in the environment and get its return values like the local reward for taking that action.
-            observation, losses = self.env.step(action=action)
+            observation, rewards = self.env.step(action=action)
 
             unroll.observation[j, :] = observation[:]
             unroll.logits[j, :] = logits[:]
             unroll.action[j, :] = action[:]
-            unroll.reward[j, :] = -losses[:]
+            unroll.reward[j, :] = T.Tensor(rewards.values())
             # unrolls.done[i,j] = done
 
         return observation, unroll
