@@ -39,6 +39,7 @@ mediapy = "^1.2.4"
 torch = {source = "cuda"}
 jupyterlab = "^4.4.10"
 numpy-quaternion = "^2024.0.12"
+notebook = "^7.4.7"
 
 [tool.poetry.group.train.dependencies]
 brax = "^0.13.0"
