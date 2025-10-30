@@ -83,14 +83,21 @@ class MujocoEnv(gym.Env):
 
         super().__init__()
 
-    def _set_observation_space(self):
-        raise NotImplementedError
+    def get_observation_size(self) -> int:
+        return T.flatten(self._get_observation()).shape[0]
+
+    def get_action_size(self) -> int:
+        return T.flatten(T.Tensor(self.action_space.sample())).shape[0]
+
+    # def _set_observation_space(self):
+    #     raise NotImplementedError
 
     def _get_observation(self):
         raise NotImplementedError
 
+
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
-        assert self.observation_space, "observation space not set"
+        # assert self.observation_space, "observation space not set"
 
         # mujoco.mj_resetData(self.model, self.data)
         # TODO: apply initial noise
@@ -106,12 +113,13 @@ class MujocoEnv(gym.Env):
             self.viewer = None
 
     def step(self, action: T.Tensor) -> tuple[T.Tensor, Dict[str, T.Tensor]]:
-        assert self.observation_space, "observation space not set"
+        # assert self.observation_space, "observation space not set"
 
         self._do_simulation(ctrl=action)
+        # obs = self._get_observation()
         obs = self._get_observation()
 
-        return obs, self.experiment.calculate_reward(mj_data=self.data)
+        return obs, self.experiment(mj_data=self.data)
         # return  super().step() # TODO: dont know how important the step() function is
 
     def _do_simulation(self, ctrl: T.Tensor):
@@ -122,7 +130,7 @@ class MujocoEnv(gym.Env):
         assert ctrl.shape == self.action_space.shape, "Action dimension mismatch"
 
         # -- step mujoco simulation
-        self.data.ctrl[:] = ctrl.to("cpu").numpy()
+        self.data.ctrl[:] = ctrl.detach().to(device="cpu").numpy()
         mujoco.mj_step(self.model, self.data, nstep=self.sim_frames_per_step)
         # mujoco.mj_forward(self.model, self.data)
 
@@ -169,7 +177,7 @@ class Go2Env(MujocoEnv):
             # 'imu_quat'
         ]
 
-        self._set_observation_space()
+        # self._set_observation_space()
 
         super().__init__(
             model_path=model_path,
@@ -184,6 +192,7 @@ class Go2Env(MujocoEnv):
     #         shape=[len(self.sensor_names)],
     #         dtype=np.float32,
     #     )
+        self.observation_space_size = self.get_observation_size()
 
     def _get_observation(self) -> T.Tensor:
         return self.get_sensor_state_array()
@@ -193,4 +202,4 @@ class Go2Env(MujocoEnv):
         return {n: T.Tensor(self.data.sensor(n).data).to(dtype=T.float32) for n in self.sensor_names}
         
     def get_sensor_state_array(self) -> T.Tensor:
-        return T.concat([self.data.sensor(n).data for n in self.sensor_names]).to(dtype=T.float32)
+        return T.concat([*self.get_sensor_state_dict().values()]).to(dtype=T.float32)

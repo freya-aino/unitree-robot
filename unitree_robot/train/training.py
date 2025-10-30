@@ -5,7 +5,7 @@ import torch as T
 from torch import optim
 from typing import Any, Callable, Dict, Optional
 
-from unitree_robot.common.datastructure import UnrollData
+from unitree_robot.common.datastructure import UnrollData, MultiUnrollData
 from unitree_robot.train.environments import MujocoEnv
 from unitree_robot.train.agents import PPOAgent
 
@@ -34,16 +34,14 @@ class Trainer:
 
         # -- variables
         self.env = env
-        assert self.env.observation_space.shape, "observation space dose not seem to be initialized"
-        assert self.env.action_space.shape, "observation space dose not seem to be initialized"
-        self.observation_space_shape = self.env.observation_space.shape
-        self.action_space_shape = self.env.action_space.shape
-        self.reward_shape = env.experiment.get_reward_shape() # TODO
+        self.observation_space_size = self.env.get_observation_size()
+        self.action_space_size = self.env.get_action_size()
+        self.reward_size = len(env.experiment)
 
         # -- create agent
         self.agent = PPOAgent(
-            input_size=self.observation_space_shape[0],
-            output_size=self.action_space_shape[0],
+            input_size=self.observation_space_size,
+            output_size=self.action_space_size,
             network_hidden_size=network_hidden_size,
             entropy_cost=entropy_cost,
             discounting=discounting,
@@ -72,15 +70,15 @@ class Trainer:
 
         unroll = UnrollData.initialize_empty(
             unroll_length=unroll_length,
-            observation_shape=self.observation_space_shape,
-            action_shape=self.action_space_shape,
-            reward_shape=self.reward_shape,
+            observation_size=self.observation_space_size,
+            action_size=self.action_space_size,
+            reward_size=self.reward_size,
             device=self.device,
         )
 
         # env warmup
         self.env.reset(seed=seed)
-        action = self.env.action_space.sample()
+        action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32, device=self.device)
         observation, _ = self.env.step(action=action)
 
         for j in range(unroll_length):
@@ -91,10 +89,12 @@ class Trainer:
             # take a step in the environment and get its return values like the local reward for taking that action.
             observation, rewards = self.env.step(action=action)
 
+            raw_rewards, scaled_rewards = T.Tensor([*rewards.values()]).T
+
             unroll.observation[j, :] = observation[:]
             unroll.logits[j, :] = logits[:]
             unroll.action[j, :] = action[:]
-            unroll.reward[j, :] = T.Tensor(rewards.values())
+            unroll.reward[j, :] = scaled_rewards[:]
             # unrolls.done[i,j] = done
 
         return observation, unroll
@@ -102,13 +102,14 @@ class Trainer:
     def train(
         self,
         epochs: int = 4,
-        batch_size: int = 2048,
         num_unrolls: int = 5,
         unroll_length: int = 160,
-        progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+        minibatch_size: int = 16, # the size of individual sequences extracted from a set of larger sequences whos length is given by unroll_length
         seed: int = 0,
     ):
 
+        assert unroll_length % minibatch_size == 0, "unroll_length must be divisible by minibatch_size"
+        num_minibatches = unroll_length // minibatch_size
 
         sps = 0
         total_steps = 0
@@ -138,20 +139,28 @@ class Trainer:
         # num_epochs = num_timesteps // (num_steps * eval_frequency)
         # num_unrolls = batch_size * num_minibatches // self.env.num_envs
 
-        for _ in range(epochs):
+        for e in range(epochs):
 
-            observation, unroll_data = self.train_unroll(unroll_length=unroll_length, seed=seed)
+            print(f"epoch: {e}")
 
-            # with a number_ob_unrolls of 30 and a unroll_length of 150 we get a tensor of size [4500, observation_shape]
+            unrolls = []
+            for u in range(num_unrolls):
+                observation, unroll_data = self.train_unroll(unroll_length=unroll_length, seed=seed)
+                unrolls.append(unroll_data)
+            multi_unroll_data = MultiUnrollData.from_multiple_unrolls(unrolls=unrolls)
 
+            print(f"finished : {multi_unroll_data.observation.shape}")
+
+            # print(f"reconfigured : {new_observation.shape}")
+
+            # e.g. with a number_ob_unrolls of 30 and a unroll_length of 150 we get a tensor of size [4500, observation_shape]
             # # make unroll first
             # def unroll_first(unroll_data):
             #   unroll_data = unroll_data.swapaxes(0, 1)
             #   return unroll_data.reshape([unroll_data.shape[0], -1] + list(unroll_data.shape[3:]))
             # unroll_data = sd_map(unroll_first, unroll_data) # TODO: this applies the unroll_first to each eolement in the unroll data
 
-
-            # update normalization statistics
+            # update normalization statistics # TODO: unsure what this does
             # self.agent.update_normalization(unroll_data.observation)
 
             # for _ in range(num_updates):
@@ -175,4 +184,3 @@ class Trainer:
             # loss.backward()
             # self.optim.step()
 
-            return unroll_data

@@ -80,29 +80,48 @@ class PPOAgent(nn.Module):
         action = self.dist_sample_no_postprocess(loc, scale)
         return logits, action
 
-    def compute_gae(self, truncation, termination, reward, values, bootstrap_value):
-        truncation_mask = 1 - truncation
+    def compute_gae(self, reward, values, bootstrap_value):
         # Append bootstrapped value to get [v1, ..., v_t+1]
         values_t_plus_1 = T.cat([values[1:], T.unsqueeze(bootstrap_value, 0)], dim=0)
-        deltas = reward + self.discounting * (
-                1 - termination) * values_t_plus_1 - values
-        deltas *= truncation_mask
+        deltas = reward + self.discounting * values_t_plus_1 - values
 
         acc = T.zeros_like(bootstrap_value)
-        vs_minus_v_xs = T.zeros_like(truncation_mask)
+        vs_minus_v_xs = T.zeros_like(values)
 
-        for ti in range(truncation_mask.shape[0]):
-            ti = truncation_mask.shape[0] - ti - 1
-            acc = deltas[ti] + self.discounting * (
-                    1 - termination[ti]) * truncation_mask[ti] * self.lambda_ * acc
-            vs_minus_v_xs[ti] = acc
+        for ti in range(values.shape[0]):
+            ti = values.shape[0] - ti - 1
+            vs_minus_v_xs[ti] = deltas[ti] + self.discounting * self.lambda_ * acc
 
         # Add V(x_s) to get v_s.
         vs = vs_minus_v_xs + values
         vs_t_plus_1 = T.cat([vs[1:], T.unsqueeze(bootstrap_value, 0)], 0)
-        advantages = (reward + self.discounting *
-                      (1 - termination) * vs_t_plus_1 - values) * truncation_mask
+        advantages = reward + self.discounting * vs_t_plus_1 - values
         return vs, advantages
+
+    # def compute_gae(self, truncation, termination, reward, values, bootstrap_value):
+    #     truncation_mask = 1 - truncation
+    #     # Append bootstrapped value to get [v1, ..., v_t+1]
+    #     values_t_plus_1 = T.cat([values[1:], T.unsqueeze(bootstrap_value, 0)], dim=0)
+    #     deltas = reward + self.discounting * (
+    #             1 - termination) * values_t_plus_1 - values
+    #     deltas *= truncation_mask
+    #
+    #     acc = T.zeros_like(bootstrap_value)
+    #     vs_minus_v_xs = T.zeros_like(truncation_mask)
+    #
+    #     for ti in range(truncation_mask.shape[0]):
+    #         ti = truncation_mask.shape[0] - ti - 1
+    #         acc = deltas[ti] + self.discounting * (
+    #                 1 - termination[ti]) * truncation_mask[ti] * self.lambda_ * acc
+    #         vs_minus_v_xs[ti] = acc
+    #
+    #     # Add V(x_s) to get v_s.
+    #     vs = vs_minus_v_xs + values
+    #     vs_t_plus_1 = T.cat([vs[1:], T.unsqueeze(bootstrap_value, 0)], 0)
+    #     advantages = (reward + self.discounting *
+    #                   (1 - termination) * vs_t_plus_1 - values) * truncation_mask
+    #     return vs, advantages
+
 
     def loss(self, unroll_data: UnrollData):
         # observation = self.normalize(unroll_data.observation)
@@ -115,7 +134,7 @@ class PPOAgent(nn.Module):
         bootstrap_value = baseline[-1]
         baseline = baseline[:-1]
         reward = unroll_data.reward * self.reward_scaling
-        termination = unroll_data.done * (1 - unroll_data.truncation)
+        # termination = unroll_data.done * (1 - unroll_data.truncation)
 
         loc, scale = self.dist_create(unroll_data.logits)
         behaviour_action_log_probs = self.dist_log_prob(loc, scale, unroll_data.action)
@@ -124,8 +143,8 @@ class PPOAgent(nn.Module):
 
         with T.no_grad():
             vs, advantages = self.compute_gae(
-                truncation=unroll_data.truncation,
-                termination=termination,
+                # truncation=unroll_data.truncation,
+                # termination=termination,
                 reward=reward,
                 values=baseline,
                 bootstrap_value=bootstrap_value

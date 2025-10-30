@@ -18,10 +18,9 @@ class Reward(ABC):
         self.scale = scale
 
     def __call__(self, reward):
-        return reward * self.scale
+        return reward, reward * self.scale
 
 
-    
 class BaseOrientationReward(Reward):
     def __init__(self, body_name: str, scale: float, angle_vector: NDArray[np.float32] = np.array([1.0,0.0,0.0])):
         self.body_name = body_name
@@ -31,7 +30,7 @@ class BaseOrientationReward(Reward):
     def __call__(self, data: MjData):
         body_quat = data.body(self.body_name).xquat
         assert body_quat.sum() > 0, "body rotation quaternion is not initialized at this point"
-        return super()((1 - calc_angle(body_rotation_quat=body_quat, angle_vector=self.angle_vector)))
+        return super().__call__((1 - calc_angle(body_rotation_quat=body_quat, angle_vector=self.angle_vector)))
 
 
 class BodyDistanceReward(Reward):
@@ -65,7 +64,7 @@ class BodyDistanceReward(Reward):
         to_positions = np.stack([data.body(n).xpos for n in self.body_names_from])
 
         dist = np.mean(np.abs(from_positions.mean(axis=0) - to_positions.mean(axis=0)))
-        return super()(dist)
+        return super().__call__(dist)
 
 class BodyHeightReward(BodyDistanceReward):
     def __init__(
@@ -81,7 +80,7 @@ class BodyHeightReward(BodyDistanceReward):
         )
 
     def __call__(self, data: MjData):
-        return super()(data=data)
+        return super().__call__(data=data)
 
 
 class EnergyReward(Reward):
@@ -95,7 +94,7 @@ class EnergyReward(Reward):
         # weight_energy = 0.1 # TODO
         # loss_energy = weight_energy * jp.sum(jp.abs(actuator_force))
 
-        return super()(-actuator_force)
+        return super().__call__(-actuator_force)
 
 
 class JointLimitReward(Reward):
@@ -110,5 +109,6 @@ class JointLimitReward(Reward):
         jnt_half_range = (jnt_range[:, 1] - jnt_range[:, 0]) / 2  # Berechnet die halbe Reichweite
         normalized_deviation = (qpos - jnt_center) / jnt_half_range  # Normalisiert die Abweichung zwischen der tatsächlichen Gelenkposition und dessen Center auf -1 bis 1
         loss = np.mean(np.abs(normalized_deviation))
+        # TODO: quadrating the loss might be desirable - check when training
 
-        return super()(-loss)
+        return super().__call__(-loss)

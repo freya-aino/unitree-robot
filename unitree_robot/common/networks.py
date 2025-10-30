@@ -11,7 +11,7 @@ class BasicPolicyValueNetwork(nn.Module):
             nn.Linear(input_size, hidden_size), 
             nn.ELU(), 
             nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, output_size), 
+            nn.Linear(hidden_size, output_size * 2), # * 2 because it should output logits
             nn.ELU(), 
         )
 
@@ -25,7 +25,7 @@ class BasicPolicyValueNetwork(nn.Module):
 
 
     def policy_forward(self, x: T.Tensor):
-        return(self.policy_network(x))
+        return self.policy_network(x)
 
     def value_forward(self, x: T.Tensor):
-        return(self.value_network(x))
+        return self.value_network(x)
