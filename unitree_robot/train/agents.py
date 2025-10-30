@@ -123,9 +123,15 @@ class PPOAgent(nn.Module):
     #     return vs, advantages
 
 
-    def loss(self, unroll_data: UnrollData):
+    def forward(
+        self,
+        observation: T.Tensor,
+        logits: T.Tensor,
+        action: T.Tensor,
+        reward: T.Tensor,
+    ):
+
         # observation = self.normalize(unroll_data.observation)
-        observation = unroll_data.observation
         policy_logits = self.network.policy_forward(observation[:-1])
         baseline = self.network.value_forward(observation)
         baseline = T.squeeze(baseline, dim=-1)
@@ -133,13 +139,15 @@ class PPOAgent(nn.Module):
         # Use last baseline value (from the value function) to bootstrap.
         bootstrap_value = baseline[-1]
         baseline = baseline[:-1]
-        reward = unroll_data.reward * self.reward_scaling
+        reward = reward * self.reward_scaling
         # termination = unroll_data.done * (1 - unroll_data.truncation)
 
-        loc, scale = self.dist_create(unroll_data.logits)
-        behaviour_action_log_probs = self.dist_log_prob(loc, scale, unroll_data.action)
+        loc, scale = self.dist_create(logits)
+
+        raise NotImplementedError("this is not complete yet since this function does not account for the batch dimension at [0]")
+        behaviour_action_log_probs = self.dist_log_prob(loc, scale, action)
         loc, scale = self.dist_create(policy_logits)
-        target_action_log_probs = self.dist_log_prob(loc, scale, unroll_data.action)
+        target_action_log_probs = self.dist_log_prob(loc, scale, action)
 
         with T.no_grad():
             vs, advantages = self.compute_gae(
@@ -163,5 +171,9 @@ class PPOAgent(nn.Module):
         entropy = T.mean(self.dist_entropy(loc, scale))
         entropy_loss = self.entropy_cost * -entropy
 
-        return policy_loss + v_loss + entropy_loss
+        return {
+            "policy_loss": policy_loss,
+            "v_loss": v_loss,
+            "entropy_loss": entropy_loss
+        }
 

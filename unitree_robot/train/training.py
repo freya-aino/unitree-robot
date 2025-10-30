@@ -5,7 +5,9 @@ import torch as T
 from torch import optim
 from typing import Any, Callable, Dict, Optional
 
-from unitree_robot.common.datastructure import UnrollData, MultiUnrollData
+from torch.utils.data import DataLoader
+
+from unitree_robot.common.datastructure import UnrollData, MultiUnrollDataset
 from unitree_robot.train.environments import MujocoEnv
 from unitree_robot.train.agents import PPOAgent
 
@@ -102,14 +104,17 @@ class Trainer:
     def train(
         self,
         epochs: int = 4,
-        num_unrolls: int = 5,
-        unroll_length: int = 160,
-        minibatch_size: int = 16, # the size of individual sequences extracted from a set of larger sequences whos length is given by unroll_length
+        train_batch_size: int = 16,
+        num_unrolls: int = 4,
+        unroll_length: int = 256,
+        minibatch_size: int = 32, # the size of individual sequences extracted from a set of larger sequences whos length is given by unroll_length
         seed: int = 0,
     ):
 
         assert unroll_length % minibatch_size == 0, "unroll_length must be divisible by minibatch_size"
         num_minibatches = unroll_length // minibatch_size
+
+        assert (num_unrolls * num_minibatches) % train_batch_size == 0, "(num_unrolls * num_minibatches) must be divisible by train_batch_size"
 
         sps = 0
         total_steps = 0
@@ -143,13 +148,37 @@ class Trainer:
 
             print(f"epoch: {e}")
 
+            # Unroll a couple of times
             unrolls = []
             for u in range(num_unrolls):
                 observation, unroll_data = self.train_unroll(unroll_length=unroll_length, seed=seed)
                 unrolls.append(unroll_data)
-            multi_unroll_data = MultiUnrollData.from_multiple_unrolls(unrolls=unrolls)
 
-            print(f"finished : {multi_unroll_data.observation.shape}")
+
+            # convert the full sequences to sequence parts (minibatches)
+            multi_unroll_dataset = MultiUnrollDataset(
+                unrolls=unrolls,
+                minibatch_size=minibatch_size,
+                num_minibatches=num_minibatches,
+                minibatched=True,
+            )
+
+            dataloader = DataLoader(
+                multi_unroll_dataset,
+                batch_size=train_batch_size,
+            )
+
+            for i, batch in enumerate(dataloader):
+                print(f"batch: {i}")
+
+                losses = self.agent(
+                    observation=batch["observation"],
+                    logits=batch["logits"],
+                    action=batch["action"],
+                    reward=batch["reward"],
+                )
+
+
 
             # print(f"reconfigured : {new_observation.shape}")
 
@@ -158,10 +187,11 @@ class Trainer:
             # def unroll_first(unroll_data):
             #   unroll_data = unroll_data.swapaxes(0, 1)
             #   return unroll_data.reshape([unroll_data.shape[0], -1] + list(unroll_data.shape[3:]))
-            # unroll_data = sd_map(unroll_first, unroll_data) # TODO: this applies the unroll_first to each eolement in the unroll data
+            # unroll_data = sd_map(unroll_first, unroll_data)
 
             # update normalization statistics # TODO: unsure what this does
             # self.agent.update_normalization(unroll_data.observation)
+            # TODO - replace this with a reward improvement model, with adverserial loss targets
 
             # for _ in range(num_updates):
 
