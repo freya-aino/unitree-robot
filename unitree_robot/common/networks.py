@@ -1,9 +1,10 @@
 import torch as T
 import torch.nn as nn
+from typing import Tuple
 
 class BasicPolicyValueNetwork(nn.Module):
     
-    def __init__(self, input_size: int, output_size: int, hidden_size: int):
+    def __init__(self, input_size: int, policy_output_size: int, value_output_size: int, hidden_size: int):
 
         super().__init__()
 
@@ -11,7 +12,7 @@ class BasicPolicyValueNetwork(nn.Module):
             nn.Linear(input_size, hidden_size), 
             nn.ELU(), 
             nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, output_size * 2), # * 2 because it should output logits
+            nn.Linear(hidden_size, policy_output_size), # * 2 because it should output logits
             nn.ELU(), 
         )
 
@@ -19,8 +20,14 @@ class BasicPolicyValueNetwork(nn.Module):
             nn.Linear(input_size, hidden_size), 
             nn.ELU(), 
             nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, output_size), 
+            nn.Linear(hidden_size, value_output_size),
             nn.ELU(),
+        )
+
+    def forward(self, observation: T.Tensor) -> Tuple[T.Tensor, T.Tensor]:
+        return (
+            self.policy_network(observation), # "policy_logits"
+            self.value_network(observation) # "baseline"
         )
 
 

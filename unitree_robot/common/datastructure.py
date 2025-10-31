@@ -80,11 +80,6 @@ class MultiUnrollDataset(Dataset):
         a = self.action.view([num_unrolls, num_minibatches, minibatch_size, -1])
         r = self.reward.view([num_unrolls, num_minibatches, minibatch_size, -1])
 
-        print(o.shape)
-        print(l.shape)
-        print(a.shape)
-        print(r.shape)
-
         index = randperm(num_unrolls + num_minibatches)
 
         self.observations = o.reshape([num_unrolls * num_minibatches, minibatch_size, -1])[index, :]

@@ -1,15 +1,13 @@
 from copy import deepcopy
-
+from tqdm import tqdm
 import torch as T
-
 from torch import optim
 from typing import Any, Callable, Dict, Optional
-
 from torch.utils.data import DataLoader
-
 from unitree_robot.common.datastructure import UnrollData, MultiUnrollDataset
 from unitree_robot.train.environments import MujocoEnv
 from unitree_robot.train.agents import PPOAgent
+
 
 class Trainer:
 
@@ -43,7 +41,8 @@ class Trainer:
         # -- create agent
         self.agent = PPOAgent(
             input_size=self.observation_space_size,
-            output_size=self.action_space_size,
+            policy_output_size=self.action_space_size * 2, # *2 for logits
+            value_output_size=self.reward_size,
             network_hidden_size=network_hidden_size,
             entropy_cost=entropy_cost,
             discounting=discounting,
@@ -70,36 +69,43 @@ class Trainer:
     def train_unroll(self, unroll_length: int, seed: int):
         """Return step data over multple unrolls."""
 
-        unroll = UnrollData.initialize_empty(
-            unroll_length=unroll_length,
-            observation_size=self.observation_space_size,
-            action_size=self.action_space_size,
-            reward_size=self.reward_size,
-            device=self.device,
-        )
+        with T.no_grad():
 
-        # env warmup
-        self.env.reset(seed=seed)
-        action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32, device=self.device)
-        observation, _ = self.env.step(action=action)
+            unroll = UnrollData.initialize_empty(
+                unroll_length=unroll_length,
+                observation_size=self.observation_space_size,
+                action_size=self.action_space_size,
+                reward_size=self.reward_size,
+                device=self.device,
+            )
 
-        for j in range(unroll_length):
+            # env warmup
+            self.env.reset(seed=seed)
+            action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32, device=self.device)
+            observation, _ = self.env.step(action=action)
 
-            # decide which action to take depending on the environment observation (robot state)
-            logits, action = self.agent.get_logits_action(observation=observation)
+            observation = observation.to(dtype=T.float32, device=self.device)
 
-            # take a step in the environment and get its return values like the local reward for taking that action.
-            observation, rewards = self.env.step(action=action)
+            unroll.observation[0, :] = observation[:]
 
-            raw_rewards, scaled_rewards = T.Tensor([*rewards.values()]).T
+            for j in range(1, unroll_length):
 
-            unroll.observation[j, :] = observation[:]
-            unroll.logits[j, :] = logits[:]
-            unroll.action[j, :] = action[:]
-            unroll.reward[j, :] = scaled_rewards[:]
-            # unrolls.done[i,j] = done
+                # decide which action to take depending on the environment observation (robot state)
+                logits, action = self.agent.sample_action(observation=observation)
 
-        return observation, unroll
+                # take a step in the environment and get its return values like the local reward for taking that action.
+                observation, rewards = self.env.step(action=action)
+                observation = observation.to(dtype=T.float32, device=self.device)
+
+                raw_rewards, scaled_rewards = T.Tensor([*rewards.values()]).to(dtype=T.float32, device=self.device).T
+
+                unroll.observation[j, :] = observation[:]
+                unroll.logits[j, :] = logits[:]
+                unroll.action[j, :] = action[:]
+                unroll.reward[j, :] = scaled_rewards[:]
+                # unrolls.done[i,j] = done
+
+            return observation, unroll
 
     def train(
         self,
@@ -116,41 +122,13 @@ class Trainer:
 
         assert (num_unrolls * num_minibatches) % train_batch_size == 0, "(num_unrolls * num_minibatches) must be divisible by train_batch_size"
 
-        sps = 0
-        total_steps = 0
-        total_loss = 0
-        # for eval_i in range(eval_frequency + 1):
-        # if progress_fn:
-        #   t = time.time()
-        #   with T.no_grad():
-        #     episode_count, episode_reward = self.eval_unroll(episode_length)
-        #   duration = time.time() - t
-        #   # TODO(brax-team): only count stats from completed episodes
-        #   episode_avg_length = self.env.num_envs * episode_length / episode_count
-        #   eval_sps = self.env.num_envs * episode_length / duration
-        #   progress = {
-        #       'eval/episode_reward': episode_reward,
-        #       'eval/completed_episodes': episode_count,
-        #       'eval/avg_episode_length': episode_avg_length,
-        #       'speed/sps': sps,
-        #       'speed/eval_sps': eval_sps,
-        #       'losses/total_loss': total_loss,
-        #   }
-        #   progress_fn(total_steps, progress)
-        # if eval_i == eval_frequency:
-        #   break
-
-        # num_steps = batch_size * num_minibatches * unroll_length
-        # num_epochs = num_timesteps // (num_steps * eval_frequency)
-        # num_unrolls = batch_size * num_minibatches // self.env.num_envs
-
         for e in range(epochs):
 
             print(f"epoch: {e}")
 
             # Unroll a couple of times
             unrolls = []
-            for u in range(num_unrolls):
+            for u in tqdm(range(num_unrolls), desc="unrolling"):
                 observation, unroll_data = self.train_unroll(unroll_length=unroll_length, seed=seed)
                 unrolls.append(unroll_data)
 
@@ -166,11 +144,11 @@ class Trainer:
             dataloader = DataLoader(
                 multi_unroll_dataset,
                 batch_size=train_batch_size,
+                pin_memory_device=self.device,
             )
 
+            loss_average = 0
             for i, batch in enumerate(dataloader):
-                print(f"batch: {i}")
-
                 losses = self.agent(
                     observation=batch["observation"],
                     logits=batch["logits"],
@@ -178,39 +156,13 @@ class Trainer:
                     reward=batch["reward"],
                 )
 
+                # sum loss
+                loss = losses["policy_loss"] + losses["value_loss"] + losses["entropy_loss"]
+                loss_average += loss.detach().cpu().item()
 
+                self.optim.zero_grad()
+                loss.backward()
+                self.optim.step()
 
-            # print(f"reconfigured : {new_observation.shape}")
-
-            # e.g. with a number_ob_unrolls of 30 and a unroll_length of 150 we get a tensor of size [4500, observation_shape]
-            # # make unroll first
-            # def unroll_first(unroll_data):
-            #   unroll_data = unroll_data.swapaxes(0, 1)
-            #   return unroll_data.reshape([unroll_data.shape[0], -1] + list(unroll_data.shape[3:]))
-            # unroll_data = sd_map(unroll_first, unroll_data)
-
-            # update normalization statistics # TODO: unsure what this does
-            # self.agent.update_normalization(unroll_data.observation)
-            # TODO - replace this with a reward improvement model, with adverserial loss targets
-
-            # for _ in range(num_updates):
-
-            # shuffle and batch the data
-            # with T.no_grad():
-            #   permutation = T.randperm(unroll_data.observation.shape[1], device=device)
-            #   def shuffle_batch(data):
-            #     data = data[:, permutation]
-            #     data = data.reshape([data.shape[0], num_minibatches, -1] +
-            #                         list(data.shape[2:]))
-            #     return data.swapaxes(0, 1)
-              # epoch_td = sd_map(shuffle_batch, unroll_data) # TODO: same as above with sd_map()
-
-            # for minibatch_i in range(num_minibatches):
-            #   # td_minibatch = sd_map(lambda d: d[minibatch_i], epoch_td) # TODO: same as above with sd_map()
-
-            # loss = self.agent.loss(unroll_data)
-            #
-            # self.optim.zero_grad()
-            # loss.backward()
-            # self.optim.step()
+            print(f"\tloss -> [ {loss_average / len(dataloader)} ]")
 
