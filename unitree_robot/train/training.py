@@ -1,27 +1,29 @@
+import time
 from copy import deepcopy
 from tqdm import tqdm
 import torch as T
 from torch import optim
-from typing import Any, Callable, Dict, Optional
+import mlflow
 from torch.utils.data import DataLoader
 from unitree_robot.common.datastructure import UnrollData, MultiUnrollDataset
 from unitree_robot.train.environments import MujocoEnv
 from unitree_robot.train.agents import PPOAgent
-
+from unitree_robot.train.experiments import Experiment
 
 class Trainer:
 
     def __init__(
         self,
         env: MujocoEnv,
+        experiment: Experiment,
         device: str,
         network_hidden_size: int,
-        reward_scaling: float = .1,
+        network_layers: int,
+        reward_scaling: float,
         entropy_cost: float = 1e-2,
         discounting: float = .97,
         learning_rate: float = 3e-4,
         optimizer_fn=optim.AdamW,
-        rng_seed: int = 0
     ) -> None:
     
         # -- set device
@@ -36,7 +38,7 @@ class Trainer:
         self.env = env
         self.observation_space_size = self.env.get_observation_size()
         self.action_space_size = self.env.get_action_size()
-        self.reward_size = len(env.experiment)
+        self.reward_size = len(experiment)
 
         # -- create agent
         self.agent = PPOAgent(
@@ -44,6 +46,7 @@ class Trainer:
             policy_output_size=self.action_space_size * 2, # *2 for logits
             value_output_size=self.reward_size,
             network_hidden_size=network_hidden_size,
+            network_layers=network_layers,
             entropy_cost=entropy_cost,
             discounting=discounting,
             reward_scaling=reward_scaling,
@@ -53,6 +56,8 @@ class Trainer:
         # -- set up optimizer
         self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
 
+        # -- set experiment
+        self.experiment = experiment
 
     # def eval_unroll(self, length):
     #   """Return number of episodes and average reward for a single unroll."""
@@ -69,43 +74,46 @@ class Trainer:
     def train_unroll(self, unroll_length: int, seed: int):
         """Return step data over multple unrolls."""
 
-        with T.no_grad():
+        self.agent.eval()
 
-            unroll = UnrollData.initialize_empty(
-                unroll_length=unroll_length,
-                observation_size=self.observation_space_size,
-                action_size=self.action_space_size,
-                reward_size=self.reward_size,
-                device=self.device,
-            )
+        unroll = UnrollData.initialize_empty(
+            unroll_length=unroll_length,
+            observation_size=self.observation_space_size,
+            action_size=self.action_space_size,
+            reward_size=self.reward_size,
+            device=self.device,
+        )
 
-            # env warmup
-            self.env.reset(seed=seed)
-            action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32, device=self.device)
-            observation, _ = self.env.step(action=action)
+        # env warmup
+        self.env.reset(seed=seed)
+        action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32, device=self.device)
+        observation, _ = self.env.step(action=action)
+        observation = observation.to(dtype=T.float32, device=self.device)
+        unroll.observation[0, :] = observation[:]
 
+        for j in range(1, unroll_length):
+
+            # decide which action to take depending on the environment observation (robot state)
+            logits, action = self.agent.sample_action(observation=observation.unsqueeze(0).unsqueeze(0))
+
+            action = action.squeeze()
+            logits = logits.squeeze()
+
+            # take a step in the environment and get its return values like the local reward for taking that action.
+            observation, mj_data = self.env.step(action=action)
             observation = observation.to(dtype=T.float32, device=self.device)
 
-            unroll.observation[0, :] = observation[:]
+            rewards = self.experiment(mj_data=mj_data)
 
-            for j in range(1, unroll_length):
+            raw_rewards, scaled_rewards = T.Tensor([*rewards.values()]).T
 
-                # decide which action to take depending on the environment observation (robot state)
-                logits, action = self.agent.sample_action(observation=observation)
+            unroll.observation[j, :] = observation[:]
+            unroll.logits[j, :] = logits[:]
+            unroll.action[j, :] = action[:]
+            unroll.reward[j, :] = scaled_rewards[:].to(dtype=T.float32, device=self.device)
+            # unrolls.done[i,j] = done
 
-                # take a step in the environment and get its return values like the local reward for taking that action.
-                observation, rewards = self.env.step(action=action)
-                observation = observation.to(dtype=T.float32, device=self.device)
-
-                raw_rewards, scaled_rewards = T.Tensor([*rewards.values()]).to(dtype=T.float32, device=self.device).T
-
-                unroll.observation[j, :] = observation[:]
-                unroll.logits[j, :] = logits[:]
-                unroll.action[j, :] = action[:]
-                unroll.reward[j, :] = scaled_rewards[:]
-                # unrolls.done[i,j] = done
-
-            return observation, unroll
+        return observation, unroll
 
     def train(
         self,
@@ -122,16 +130,23 @@ class Trainer:
 
         assert (num_unrolls * num_minibatches) % train_batch_size == 0, "(num_unrolls * num_minibatches) must be divisible by train_batch_size"
 
-        for e in range(epochs):
 
-            print(f"epoch: {e}")
+        for e in tqdm(range(epochs), "training"):
+
+            time_to_unroll = time.perf_counter()
 
             # Unroll a couple of times
             unrolls = []
-            for u in tqdm(range(num_unrolls), desc="unrolling"):
+            for u in range(num_unrolls):
+                # for u in tqdm(range(num_unrolls), desc="unrolling"):
                 observation, unroll_data = self.train_unroll(unroll_length=unroll_length, seed=seed)
                 unrolls.append(unroll_data)
 
+            mlflow.log_metric(
+                "mean_time_per_unroll_step_ms",
+                (time.perf_counter() - time_to_unroll) / (num_unrolls * unroll_length) * 1000,
+                step=e
+            )
 
             # convert the full sequences to sequence parts (minibatches)
             multi_unroll_dataset = MultiUnrollDataset(
@@ -141,13 +156,26 @@ class Trainer:
                 minibatched=True,
             )
 
+            mlflow.log_metric(
+                "mean_reward", multi_unroll_dataset.reward.mean().detach().cpu().item(),
+                step=e
+            )
+
+
             dataloader = DataLoader(
                 multi_unroll_dataset,
                 batch_size=train_batch_size,
                 pin_memory_device=self.device,
             )
 
-            loss_average = 0
+            self.agent.train()
+
+            loss_averages = {
+                "policy_loss": 0,
+                "value_loss": 0,
+                "entropy_loss": 0,
+                "mean_loss": 0,
+            }
             for i, batch in enumerate(dataloader):
                 losses = self.agent(
                     observation=batch["observation"],
@@ -158,11 +186,15 @@ class Trainer:
 
                 # sum loss
                 loss = losses["policy_loss"] + losses["value_loss"] + losses["entropy_loss"]
-                loss_average += loss.detach().cpu().item()
+
+                loss_averages["policy_loss"] += losses["policy_loss"].detach().cpu().item()
+                loss_averages["value_loss"] += losses["value_loss"].detach().cpu().item()
+                loss_averages["entropy_loss"] += losses["entropy_loss"].detach().cpu().item()
+                loss_averages["mean_loss"] += loss.detach().cpu().item()
 
                 self.optim.zero_grad()
                 loss.backward()
                 self.optim.step()
 
-            print(f"\tloss -> [ {loss_average / len(dataloader)} ]")
-
+            for k in loss_averages:
+                mlflow.log_metric(k, loss_averages[k], step=e)

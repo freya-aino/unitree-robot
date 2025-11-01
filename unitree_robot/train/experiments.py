@@ -19,23 +19,23 @@ class StandUpExperiment(Experiment):
         body_angle_reward_scale: float,
         body_height_reward_scale: float,
         energy_reward_scale: float,
-        joint_limit_reward_scale: float
+        # joint_limit_reward_scale: float
     ):
 
-        self.base_height_reward = BodyHeightReward(scale=body_height_reward_scale)
-        self.base_orientation_reward = BaseOrientationReward(body_name=body_name, scale=body_angle_reward_scale)
-        self.energy_reward = EnergyReward(scale=energy_reward_scale)
+        self.rewards = {
+            "base_height_reward": BodyHeightReward(scale=body_height_reward_scale),
+            "base_orientation_reward": BaseOrientationReward(body_name=body_name, scale=body_angle_reward_scale),
+            "energy_reward": EnergyReward(scale=energy_reward_scale),
+        }
         # self.joint_limit_loss = JointLimitReward(scale=joint_limit_reward_scale)
 
         super().__init__()
 
     def __call__(self, mj_data: MjData):
-        return super().__call__(
-            body_angle = self.base_orientation_reward(mj_data),
-            body_height = self.base_height_reward(mj_data),
-            energy = self.energy_reward(mj_data),
-            # joint_limit = self.joint_limit_loss(mj_data),
-        )
+        # stand_up_reward = self.base_orientation_reward(mj_data) + self.energy_reward(mj_data) + self.base_height_reward(mj_data)
+        return super().__call__(**{
+            k: self.rewards[k](mj_data) for k in self.rewards
+        })
 
     def __len__(self):
-        return 3
+        return len(self.rewards)

@@ -16,6 +16,7 @@ class PPOAgent(nn.Module):
         policy_output_size: int,
         value_output_size: int,
         network_hidden_size: int,
+        network_layers: int,
         entropy_cost: float,
         discounting: float,
         reward_scaling: float,
@@ -24,10 +25,11 @@ class PPOAgent(nn.Module):
         super().__init__()
 
         self.network = BasicPolicyValueNetwork(
-            input_size,
-            policy_output_size,
-            value_output_size,
-            network_hidden_size
+            input_size=input_size,
+            network_layers=network_layers,
+            policy_output_size=policy_output_size,
+            value_output_size=value_output_size,
+            hidden_size=network_hidden_size,
         )
 
         self.num_steps = T.zeros((), device=device)
@@ -95,7 +97,7 @@ class PPOAgent(nn.Module):
     #   return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
 
     def sample_action(self, observation: T.Tensor):
-        # observation = self.normalize(observation)
+        # observation = self.normalize(observation
         logits = self.network.policy_forward(observation)
         loc, scale = self.create_distribution(logits)
         action = Normal(loc, scale).sample()
@@ -132,13 +134,6 @@ class PPOAgent(nn.Module):
         #     # ti = sequence_length - ti - 1
         #     acc = deltas[:, ti] + self.discounting * self.lambda_ * acc
         #     vs_minus_v_xs[:, ti] = acc
-
-        # print(f"bootstrap value shape: {bootstrap_value.shape}")
-        # print(f"values shape: {values.shape}")
-        # print(f"rewards shape: {rewards.shape}")
-        # print(f"values_t_plus_1 shape: {values_t_plus_1.shape}")
-        # print(f"deltas shape: {deltas.shape}")
-        # print(f"vs_minus_v_xs shape: {vs_minus_v_xs.shape}")
 
         # Add V(x_s) to get v_s
         vs = vs_minus_v_xs + values
@@ -215,8 +210,8 @@ class PPOAgent(nn.Module):
                 bootstrap_value=bootstrap_value
             )
 
-        advantages = advantages.mean(dim=-1)
-        # vs = vs.mean(dim=-1)
+        # vs = vs.sum(dim=-1)
+        advantages = advantages.sum(dim=-1)
 
         # print(f"vs shape", vs.shape)
         # print("advantages shape", advantages.shape)
@@ -231,8 +226,6 @@ class PPOAgent(nn.Module):
         # print(f"policy_loss: {policy_loss}")
 
         # Value function loss
-        # v_error = vs - value_baseline
-        # v_loss = (v_error).pow(2).mean()
         v_loss = F.smooth_l1_loss(vs, value_baseline)
 
         # Entropy reward

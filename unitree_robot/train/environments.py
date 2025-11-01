@@ -1,17 +1,17 @@
+from copy import deepcopy, copy
+
 import mujoco
 import torch as T
 import gymnasium as gym
 from os import path
 from numpy import float32 as np_float32
-from typing import Any, Dict
+from typing import Any, Dict, Union
 from gymnasium import spaces
 from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from mujoco import MjData, MjModel
 
 
 # TODO
-from scipy.spatial.transform import Rotation as R
-from unitree_robot.train.experiments import Experiment
 # from gym.envs.registration import load_env_plugins
 # from gym.envs.registration import make, register, registry, spec
 # load_env_plugins()
@@ -34,7 +34,6 @@ class MujocoEnv(gym.Env):
     def __init__(
         self,
         model_path: str,
-        experiment: Experiment,
         sim_frames_per_step: int,
         camera_name: str,
         width: int = 1920,
@@ -79,7 +78,6 @@ class MujocoEnv(gym.Env):
         self.height = height
         self.sim_frames_per_step = sim_frames_per_step
         self.camera_name = camera_name
-        self.experiment = experiment
 
         super().__init__()
 
@@ -112,14 +110,14 @@ class MujocoEnv(gym.Env):
             self.viewer.close()
             self.viewer = None
 
-    def step(self, action: T.Tensor) -> tuple[T.Tensor, Dict[str, T.Tensor]]:
+    def step(self, action: T.Tensor) -> tuple[T.Tensor, MjData]:
         # assert self.observation_space, "observation space not set"
 
         self._do_simulation(ctrl=action)
         # obs = self._get_observation()
         obs = self._get_observation()
 
-        return obs, self.experiment(mj_data=self.data)
+        return obs, copy(self.data)
         # return  super().step() # TODO: dont know how important the step() function is
 
     def _do_simulation(self, ctrl: T.Tensor):
@@ -147,7 +145,6 @@ class Go2Env(MujocoEnv):
         self,
         model_path: str,
         sim_frames_per_step: int,
-        experiment: Experiment,
         camera_name: str = "main"
     ):
 
@@ -172,8 +169,8 @@ class Go2Env(MujocoEnv):
             'RR_hip_pos', 'RR_hip_torque', 'RR_hip_vel', 
             'RR_thigh_pos', 'RR_thigh_torque', 'RR_thigh_vel', 
             'frame_pos', 'frame_vel', 
-            'imu_acc', 
-            'imu_gyro', 
+            # 'imu_acc',
+            # 'imu_gyro',
             # 'imu_quat'
         ]
 
@@ -183,7 +180,6 @@ class Go2Env(MujocoEnv):
             model_path=model_path,
             sim_frames_per_step=sim_frames_per_step,
             camera_name=camera_name,
-            experiment=experiment,
         )
 
     # TODO:

@@ -29,8 +29,12 @@ class BaseOrientationReward(Reward):
 
     def __call__(self, data: MjData):
         body_quat = data.body(self.body_name).xquat
-        assert body_quat.sum() > 0, "body rotation quaternion is not initialized at this point"
-        return super().__call__((1 - calc_angle(body_rotation_quat=body_quat, angle_vector=self.angle_vector)))
+        # assert body_quat.sum() > 0, "body rotation quaternion is not initialized at this point"
+        if not body_quat.sum() > 0:
+            reward = 0
+        else:
+            reward = (1 - calc_angle(body_rotation_quat=body_quat, angle_vector=self.angle_vector))
+        return super().__call__(reward=reward)
 
 
 class BodyDistanceReward(Reward):
