@@ -1,7 +1,7 @@
 import time
-from copy import deepcopy
 from tqdm import tqdm
 import torch as T
+import torch.nn as nn
 from torch import optim
 import mlflow
 from torch.utils.data import DataLoader
@@ -10,8 +10,8 @@ from unitree_robot.train.environments import MujocoEnv
 from unitree_robot.train.agents import PPOAgent
 from unitree_robot.train.experiments import Experiment
 
-class Trainer:
 
+class Trainer:
     def __init__(
         self,
         env: MujocoEnv,
@@ -20,41 +20,39 @@ class Trainer:
         network_hidden_size: int,
         network_layers: int,
         reward_scaling: float,
-        entropy_cost: float = 1e-2,
-        discounting: float = .97,
-        learning_rate: float = 3e-4,
+        discounting: float,
+        learning_rate: float,
         optimizer_fn=optim.AdamW,
+        max_gradient_norm: float = 0.5,
     ) -> None:
-    
         # -- set device
         if T.cuda.is_available() and "cuda" in device:
-          print("Trainer: device set to gpu (cuda) !")
-          self.device = device
+            print("Trainer: device set to gpu (cuda) !")
+            self.device = device
         else:
-          print("Trainer: device set to cpu !")
-          self.device = "cpu"
+            print("Trainer: device set to cpu !")
+            self.device = "cpu"
 
         # -- variables
         self.env = env
         self.observation_space_size = self.env.get_observation_size()
         self.action_space_size = self.env.get_action_size()
-        self.reward_size = len(experiment)
 
         # -- create agent
         self.agent = PPOAgent(
             input_size=self.observation_space_size,
-            policy_output_size=self.action_space_size * 2, # *2 for logits
-            value_output_size=self.reward_size,
+            policy_output_size=self.action_space_size * 2,  # *2 for logits
+            value_output_size=1,
             network_hidden_size=network_hidden_size,
             network_layers=network_layers,
-            entropy_cost=entropy_cost,
             discounting=discounting,
             reward_scaling=reward_scaling,
-            device=device
+            device=device,
         ).to(device=device)
 
         # -- set up optimizer
         self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
+        nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=max_gradient_norm)
 
         # -- set experiment
         self.experiment = experiment
@@ -71,82 +69,100 @@ class Trainer:
     #     episode_reward += T.sum(reward)
     #   return episodes, episode_reward / episodes
 
-    def train_unroll(self, unroll_length: int, seed: int):
+    def unroll(self, unroll_length: int, seed: int):
         """Return step data over multple unrolls."""
-
-        self.agent.eval()
 
         unroll = UnrollData.initialize_empty(
             unroll_length=unroll_length,
             observation_size=self.observation_space_size,
             action_size=self.action_space_size,
-            reward_size=self.reward_size,
-            device=self.device,
         )
 
         # env warmup
         self.env.reset(seed=seed)
-        action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32, device=self.device)
-        observation, _ = self.env.step(action=action)
-        observation = observation.to(dtype=T.float32, device=self.device)
-        unroll.observation[0, :] = observation[:]
+        action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32)
+        last_observation, _ = self.env.step(action=action)
+        last_observation = last_observation.to(dtype=T.float32)
 
-        for j in range(1, unroll_length):
+        for j in range(0, unroll_length):
+            assert ~last_observation.isnan().any(), "NaN observation detected"
+            assert ~last_observation.isinf().any(), "Inf observation detected"
 
             # decide which action to take depending on the environment observation (robot state)
-            logits, action = self.agent.sample_action(observation=observation.unsqueeze(0).unsqueeze(0))
+            logits, action = self.agent.get_action(observation=last_observation)
 
-            action = action.squeeze()
-            logits = logits.squeeze()
+            # squeeze the batch dimension and the sequence dimension
+            action = action.cpu().squeeze()
+            logits = logits.cpu().squeeze()
 
             # take a step in the environment and get its return values like the local reward for taking that action.
             observation, mj_data = self.env.step(action=action)
-            observation = observation.to(dtype=T.float32, device=self.device)
-
             rewards = self.experiment(mj_data=mj_data)
 
-            raw_rewards, scaled_rewards = T.Tensor([*rewards.values()]).T
+            # TODO: log rewards
 
-            unroll.observation[j, :] = observation[:]
+            scaled_reward_sum = T.Tensor([*rewards.values()]).sum()
+
+            assert ~scaled_reward_sum.isnan().any(), "NaN reward detected"
+            assert ~scaled_reward_sum.isinf().any(), "Inf reward detected"
+            assert ~action.isnan().any(), "NaN action detected"
+            assert ~action.isinf().any(), "Inf action detected"
+            assert ~logits.isnan().any(), "NaN logits detected"
+            assert ~logits.isinf().any(), "Inf logits detected"
+
+            unroll.observation[j, :] = last_observation[:]
             unroll.logits[j, :] = logits[:]
             unroll.action[j, :] = action[:]
-            unroll.reward[j, :] = scaled_rewards[:].to(dtype=T.float32, device=self.device)
+            unroll.reward[j, :] = scaled_reward_sum
             # unrolls.done[i,j] = done
 
-        return observation, unroll
+            last_observation = observation.to(dtype=T.float32)
+
+        return unroll
 
     def train(
         self,
-        epochs: int = 4,
-        train_batch_size: int = 16,
-        num_unrolls: int = 4,
-        unroll_length: int = 256,
-        minibatch_size: int = 32, # the size of individual sequences extracted from a set of larger sequences whos length is given by unroll_length
-        seed: int = 0,
+        epochs: int,
+        train_batch_size: int,
+        num_unrolls: int,
+        unroll_length: int,
+        minibatch_size: int,
+        entropy_loss_scale: float,
+        value_loss_scale: float,
+        policy_loss_scale: float,
+        seed: int,
     ):
-
-        assert unroll_length % minibatch_size == 0, "unroll_length must be divisible by minibatch_size"
+        assert unroll_length % minibatch_size == 0, (
+            "unroll_length must be divisible by minibatch_size"
+        )
         num_minibatches = unroll_length // minibatch_size
 
-        assert (num_unrolls * num_minibatches) % train_batch_size == 0, "(num_unrolls * num_minibatches) must be divisible by train_batch_size"
-
+        assert (num_unrolls * num_minibatches) % train_batch_size == 0, (
+            "(num_unrolls * num_minibatches) must be divisible by train_batch_size"
+        )
 
         for e in tqdm(range(epochs), "training"):
+            # --- UNROLL
 
             time_to_unroll = time.perf_counter()
 
             # Unroll a couple of times
-            unrolls = []
-            for u in range(num_unrolls):
-                # for u in tqdm(range(num_unrolls), desc="unrolling"):
-                observation, unroll_data = self.train_unroll(unroll_length=unroll_length, seed=seed)
-                unrolls.append(unroll_data)
+            self.agent.eval()
+            with T.no_grad():
+                unrolls = [
+                    self.unroll(unroll_length=unroll_length, seed=seed)
+                    for _ in range(num_unrolls)
+                ]
 
             mlflow.log_metric(
                 "mean_time_per_unroll_step_ms",
-                (time.perf_counter() - time_to_unroll) / (num_unrolls * unroll_length) * 1000,
-                step=e
+                (time.perf_counter() - time_to_unroll)
+                / (num_unrolls * unroll_length)
+                * 1000,
+                step=e,
             )
+
+            # --- CREATE DATASET
 
             # convert the full sequences to sequence parts (minibatches)
             multi_unroll_dataset = MultiUnrollDataset(
@@ -156,17 +172,45 @@ class Trainer:
                 minibatched=True,
             )
 
-            mlflow.log_metric(
-                "mean_reward", multi_unroll_dataset.reward.mean().detach().cpu().item(),
-                step=e
+            assert ~multi_unroll_dataset.action.isnan().any(), (
+                "Action contains NaN values"
+            )
+            assert ~multi_unroll_dataset.action.isinf().any(), (
+                "Action contains infinite values"
+            )
+            assert ~multi_unroll_dataset.reward.isnan().any(), (
+                "Reward contains NaN values"
+            )
+            assert ~multi_unroll_dataset.reward.isinf().any(), (
+                "Reward contains infinite values"
+            )
+            assert ~multi_unroll_dataset.logits.isnan().any(), (
+                "Logits contains NaN values"
+            )
+            assert ~multi_unroll_dataset.logits.isinf().any(), (
+                "Logits contains infinite values"
+            )
+            assert ~multi_unroll_dataset.observations.isnan().any(), (
+                "Observations contain NaN values"
+            )
+            assert ~multi_unroll_dataset.observations.isinf().any(), (
+                "Observations contain infinite values"
             )
 
+            mlflow.log_metric(
+                "mean_reward",
+                multi_unroll_dataset.reward.mean().detach().cpu().item(),
+                step=e,
+            )
 
             dataloader = DataLoader(
                 multi_unroll_dataset,
                 batch_size=train_batch_size,
+                shuffle=True,
                 pin_memory_device=self.device,
             )
+
+            # --- TRAINING
 
             self.agent.train()
 
@@ -176,22 +220,37 @@ class Trainer:
                 "entropy_loss": 0,
                 "mean_loss": 0,
             }
-            for i, batch in enumerate(dataloader):
+            for _, batch in enumerate(dataloader):
                 losses = self.agent(
-                    observation=batch["observation"],
+                    observations=batch["observation"],
                     logits=batch["logits"],
-                    action=batch["action"],
-                    reward=batch["reward"],
+                    actions=batch["action"],
+                    rewards=batch["reward"],
                 )
 
-                # sum loss
-                loss = losses["policy_loss"] + losses["value_loss"] + losses["entropy_loss"]
+                policy_loss = losses["policy_loss"] * policy_loss_scale
+                value_loss = losses["value_loss"] * value_loss_scale
+                entropy_loss = losses["entropy_loss"] * entropy_loss_scale
 
-                loss_averages["policy_loss"] += losses["policy_loss"].detach().cpu().item()
-                loss_averages["value_loss"] += losses["value_loss"].detach().cpu().item()
-                loss_averages["entropy_loss"] += losses["entropy_loss"].detach().cpu().item()
-                loss_averages["mean_loss"] += loss.detach().cpu().item()
+                loss_averages["policy_loss"] += (
+                    losses["policy_loss"].detach().cpu().item()
+                )
+                loss_averages["value_loss"] += (
+                    losses["value_loss"].detach().cpu().item()
+                )
+                loss_averages["entropy_loss"] += (
+                    losses["entropy_loss"].detach().cpu().item()
+                )
 
+                assert ~policy_loss.isnan(), f"policy_loss is NaN"
+                assert ~policy_loss.isinf(), f"policy_loss is Inf"
+                assert ~value_loss.isnan(), f"value_loss is NaN"
+                assert ~value_loss.isinf(), f"value_loss is Inf"
+                assert ~entropy_loss.isnan(), f"entropy_loss is NaN"
+                assert ~entropy_loss.isinf(), f"entropy_loss is Inf"
+
+                # sum loss and backpropagate
+                loss = policy_loss + value_loss + entropy_loss
                 self.optim.zero_grad()
                 loss.backward()
                 self.optim.step()

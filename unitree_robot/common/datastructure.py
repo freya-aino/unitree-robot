@@ -1,6 +1,6 @@
 from enum import Enum
 from pydantic import BaseModel, ConfigDict
-from torch import Tensor, empty, stack, randperm
+from torch import Tensor, zeros, stack, randperm
 from typing import Sequence
 
 from torch.utils.data import Dataset
@@ -27,26 +27,22 @@ class UnrollData(BaseModel):
         unroll_length: int,
         observation_size: int,
         action_size: int,
-        reward_size: int,
-        device: str
     ):
         return UnrollData(
-            observation=empty(size=[unroll_length, observation_size], device=device),
-            logits=empty(size=[unroll_length, action_size * 2], device=device),
-            action=empty(size=[unroll_length, action_size], device=device),
-            reward=empty(size=[unroll_length, reward_size], device=device),
+            observation=zeros(size=[unroll_length, observation_size], device="cpu"),
+            logits=zeros(size=[unroll_length, action_size * 2], device="cpu"),
+            action=zeros(size=[unroll_length, action_size], device="cpu"),
+            reward=zeros(size=[unroll_length, 1], device="cpu"),
         )
 
 
-
 class MultiUnrollDataset(Dataset):
-
     def __init__(
         self,
         unrolls: Sequence[UnrollData],
         num_minibatches: int,
         minibatch_size: int,
-        minibatched: bool = True
+        minibatched: bool = True,
     ):
         if not minibatched:
             raise NotImplementedError
@@ -59,13 +55,13 @@ class MultiUnrollDataset(Dataset):
         self.preprocess(
             num_unrolls=len(unrolls),
             num_minibatches=num_minibatches,
-            minibatch_size=minibatch_size
+            minibatch_size=minibatch_size,
         )
 
     def __len__(self):
         return self.observations.shape[0]
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         return {
             "observation": self.observations[idx],
             "logits": self.logits[idx],
@@ -74,15 +70,15 @@ class MultiUnrollDataset(Dataset):
         }
 
     def preprocess(self, num_unrolls: int, num_minibatches: int, minibatch_size: int):
+        observations = self.observations.view(
+            [num_unrolls, num_minibatches, minibatch_size, -1]
+        )
+        logits = self.logits.view([num_unrolls, num_minibatches, minibatch_size, -1])
+        actions = self.action.view([num_unrolls, num_minibatches, minibatch_size, -1])
+        rewards = self.reward.view([num_unrolls, num_minibatches, minibatch_size, -1])
 
-        o = self.observations.view([num_unrolls, num_minibatches, minibatch_size, -1])
-        l = self.logits.view([num_unrolls, num_minibatches, minibatch_size, -1])
-        a = self.action.view([num_unrolls, num_minibatches, minibatch_size, -1])
-        r = self.reward.view([num_unrolls, num_minibatches, minibatch_size, -1])
-
-        index = randperm(num_unrolls + num_minibatches)
-
-        self.observations = o.reshape([num_unrolls * num_minibatches, minibatch_size, -1])[index, :]
-        self.logits = l.reshape([num_unrolls * num_minibatches, minibatch_size, -1])[index, :]
-        self.action = a.reshape([num_unrolls * num_minibatches, minibatch_size, -1])[index, :]
-        self.reward = r.reshape([num_unrolls * num_minibatches, minibatch_size, -1])[index, :]
+        ll = num_unrolls * num_minibatches
+        self.observations = observations.reshape([ll, minibatch_size, -1])
+        self.logits = logits.reshape([ll, minibatch_size, -1])
+        self.action = actions.reshape([ll, minibatch_size, -1])
+        self.reward = rewards.reshape([ll, minibatch_size, -1])

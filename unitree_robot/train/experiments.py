@@ -1,13 +1,21 @@
 from abc import ABC
 from mujoco import MjData
 
-from unitree_robot.train.rewards import BaseOrientationReward, EnergyReward, BodyHeightReward, JointLimitReward
+from unitree_robot.train.rewards import (
+    BaseOrientationReward,
+    EnergyReward,
+    BodyHeightReward,
+    JointLimitReward,
+)
+
 
 class Experiment(ABC):
     def __init__(self):
         pass
+
     def __call__(self, **rewards):
         return {k: r for k, r in rewards.items()}
+
     def __len__(self):
         raise NotImplementedError
 
@@ -21,11 +29,13 @@ class StandUpExperiment(Experiment):
         energy_reward_scale: float,
         # joint_limit_reward_scale: float
     ):
-
         self.rewards = {
-            "base_height_reward": BodyHeightReward(scale=body_height_reward_scale),
-            "base_orientation_reward": BaseOrientationReward(body_name=body_name, scale=body_angle_reward_scale),
-            "energy_reward": EnergyReward(scale=energy_reward_scale),
+            # "base_height_reward": BodyHeightReward(scale=body_height_reward_scale),
+            # "base_orientation_reward": BaseOrientationReward(
+            #     body_name=body_name, scale=body_angle_reward_scale
+            # ),
+            "placeholder": lambda _: 0.0,
+            # "energy_reward": EnergyReward(scale=energy_reward_scale),
         }
         # self.joint_limit_loss = JointLimitReward(scale=joint_limit_reward_scale)
 
@@ -33,9 +43,4 @@ class StandUpExperiment(Experiment):
 
     def __call__(self, mj_data: MjData):
         # stand_up_reward = self.base_orientation_reward(mj_data) + self.energy_reward(mj_data) + self.base_height_reward(mj_data)
-        return super().__call__(**{
-            k: self.rewards[k](mj_data) for k in self.rewards
-        })
-
-    def __len__(self):
-        return len(self.rewards)
+        return super().__call__(**{k: self.rewards[k](mj_data) for k in self.rewards})

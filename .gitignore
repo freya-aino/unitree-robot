@@ -55,3 +55,4 @@ dist/
 __marimo__/
 *.ipynb_checkpoints/*
 .idea
+mlruns

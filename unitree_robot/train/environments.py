@@ -28,6 +28,7 @@ from mujoco import MjData, MjModel
 #     "elevation": -20.0,
 # }
 
+
 class MujocoEnv(gym.Env):
     """Superclass for all MuJoCo environments."""
 
@@ -38,9 +39,8 @@ class MujocoEnv(gym.Env):
         camera_name: str,
         width: int = 1920,
         height: int = 1080,
-        render_fps: int = 60
+        render_fps: int = 60,
     ):
-
         # -- metadata
         self.metadata["render_modes"] = ["human"]
         self.metadata["render_fps"] = render_fps
@@ -49,14 +49,14 @@ class MujocoEnv(gym.Env):
         # -- load mujoco model
         self.model_path = model_path
         assert path.exists(self.model_path), f"File {self.model_path} does not exist"
-        
+
         self.model = MjModel.from_xml_path(self.model_path)
         self.data = MjData(self.model)
 
         # -- visualization
         # "render_fps": int(np.round(1.0 / self.dt)), # TODO
         self.viewer = MujocoRenderer(
-            model=self.model, 
+            model=self.model,
             data=self.data,
             # default_cam_config=DEFAULT_CAMERA_CONFIG,
             width=width,
@@ -93,14 +93,12 @@ class MujocoEnv(gym.Env):
     def _get_observation(self):
         raise NotImplementedError
 
-
-    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
+    def reset(self, seed: int):
         # assert self.observation_space, "observation space not set"
-
         # mujoco.mj_resetData(self.model, self.data)
         # TODO: apply initial noise
         # self.set_stat(self.init_qpos, self.init_qvel)
-        return super().reset(seed=seed, options=options)
+        return super().reset(seed=seed)
 
     def render(self):
         self.viewer.render("human")
@@ -142,33 +140,62 @@ class Go2Env(MujocoEnv):
     """Superclass for MuJoCo environments."""
 
     def __init__(
-        self,
-        model_path: str,
-        sim_frames_per_step: int,
-        camera_name: str = "main"
+        self, model_path: str, sim_frames_per_step: int, camera_name: str = "main"
     ):
-
         self.actuator_names = [
-            'FL_calf', 'FL_hip', 'FL_thigh', 
-            'FR_calf', 'FR_hip', 'FR_thigh', 
-            'RL_calf', 'RL_hip', 'RL_thigh', 
-            'RR_calf', 'RR_hip', 'RR_thigh'
+            "FL_calf",
+            "FL_hip",
+            "FL_thigh",
+            "FR_calf",
+            "FR_hip",
+            "FR_thigh",
+            "RL_calf",
+            "RL_hip",
+            "RL_thigh",
+            "RR_calf",
+            "RR_hip",
+            "RR_thigh",
         ]
 
         self.sensor_names = [
-            'FL_calf_pos', 'FL_calf_torque', 'FL_calf_vel', 
-            'FL_hip_pos', 'FL_hip_torque', 'FL_hip_vel', 
-            'FL_thigh_pos', 'FL_thigh_torque', 'FL_thigh_vel', 
-            'FR_calf_pos', 'FR_calf_torque', 'FR_calf_vel', 
-            'FR_hip_pos', 'FR_hip_torque', 'FR_hip_vel', 
-            'FR_thigh_pos', 'FR_thigh_torque', 'FR_thigh_vel', 
-            'RL_calf_pos', 'RL_calf_torque', 'RL_calf_vel', 
-            'RL_hip_pos', 'RL_hip_torque', 'RL_hip_vel', 
-            'RL_thigh_pos', 'RL_thigh_torque', 'RL_thigh_vel', 
-            'RR_calf_pos', 'RR_calf_torque', 'RR_calf_vel', 
-            'RR_hip_pos', 'RR_hip_torque', 'RR_hip_vel', 
-            'RR_thigh_pos', 'RR_thigh_torque', 'RR_thigh_vel', 
-            'frame_pos', 'frame_vel', 
+            "FL_calf_pos",
+            "FL_calf_torque",
+            "FL_calf_vel",
+            "FL_hip_pos",
+            "FL_hip_torque",
+            "FL_hip_vel",
+            "FL_thigh_pos",
+            "FL_thigh_torque",
+            "FL_thigh_vel",
+            "FR_calf_pos",
+            "FR_calf_torque",
+            "FR_calf_vel",
+            "FR_hip_pos",
+            "FR_hip_torque",
+            "FR_hip_vel",
+            "FR_thigh_pos",
+            "FR_thigh_torque",
+            "FR_thigh_vel",
+            "RL_calf_pos",
+            "RL_calf_torque",
+            "RL_calf_vel",
+            "RL_hip_pos",
+            "RL_hip_torque",
+            "RL_hip_vel",
+            "RL_thigh_pos",
+            "RL_thigh_torque",
+            "RL_thigh_vel",
+            "RR_calf_pos",
+            "RR_calf_torque",
+            "RR_calf_vel",
+            "RR_hip_pos",
+            "RR_hip_torque",
+            "RR_hip_vel",
+            "RR_thigh_pos",
+            "RR_thigh_torque",
+            "RR_thigh_vel",
+            "frame_pos",
+            "frame_vel",
             # 'imu_acc',
             # 'imu_gyro',
             # 'imu_quat'
@@ -182,12 +209,12 @@ class Go2Env(MujocoEnv):
             camera_name=camera_name,
         )
 
-    # TODO:
-    # def _set_observation_space(self):
-    #     self.observation_space = spaces.Space(
-    #         shape=[len(self.sensor_names)],
-    #         dtype=np.float32,
-    #     )
+        # TODO:
+        # def _set_observation_space(self):
+        #     self.observation_space = spaces.Space(
+        #         shape=[len(self.sensor_names)],
+        #         dtype=np.float32,
+        #     )
         self.observation_space_size = self.get_observation_size()
 
     def _get_observation(self) -> T.Tensor:
@@ -195,7 +222,10 @@ class Go2Env(MujocoEnv):
         # return self.observation_space.sample() # TODO
 
     def get_sensor_state_dict(self) -> Dict[str, T.Tensor]:
-        return {n: T.Tensor(self.data.sensor(n).data).to(dtype=T.float32) for n in self.sensor_names}
-        
+        return {
+            n: T.Tensor(self.data.sensor(n).data).to(dtype=T.float32)
+            for n in self.sensor_names
+        }
+
     def get_sensor_state_array(self) -> T.Tensor:
         return T.concat([*self.get_sensor_state_dict().values()]).to(dtype=T.float32)
