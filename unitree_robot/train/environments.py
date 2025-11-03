@@ -94,7 +94,7 @@ class MujocoEnv(gym.Env):
 
     def reset(self, seed: int):
         # assert self.observation_space, "observation space not set"
-        # mujoco.mj_resetData(self.model, self.data)
+        mujoco.mj_resetData(self.model, self.data)
         # TODO: apply initial noise
         # self.set_stat(self.init_qpos, self.init_qvel)
         return super().reset(seed=seed)
