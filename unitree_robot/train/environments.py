@@ -5,7 +5,7 @@ import torch as T
 import gymnasium as gym
 from os import path
 from numpy import float32 as np_float32
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, List
 from gymnasium import spaces
 from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from mujoco import MjData, MjModel
@@ -27,6 +27,8 @@ from mujoco import MjData, MjModel
 #     # "lookat": np.array((0.0, 0.0, 2.0)),
 #     "elevation": -20.0,
 # }
+
+
 
 
 class MujocoEnv(gym.Env):
@@ -87,9 +89,6 @@ class MujocoEnv(gym.Env):
     def get_action_size(self) -> int:
         return T.flatten(T.Tensor(self.action_space.sample())).shape[0]
 
-    # def _set_observation_space(self):
-    #     raise NotImplementedError
-
     def _get_observation(self):
         raise NotImplementedError
 
@@ -115,8 +114,8 @@ class MujocoEnv(gym.Env):
         # obs = self._get_observation()
         obs = self._get_observation()
 
+        # super().step()
         return obs, copy(self.data)
-        # return  super().step() # TODO: dont know how important the step() function is
 
     def _do_simulation(self, ctrl: T.Tensor):
         """
@@ -125,8 +124,10 @@ class MujocoEnv(gym.Env):
         # Check control input is contained in the action space
         assert ctrl.shape == self.action_space.shape, "Action dimension mismatch"
 
+        ctrl = ctrl.detach().cpu().numpy() / self.sim_frames_per_step
+
         # -- step mujoco simulation
-        self.data.ctrl[:] = ctrl.detach().to(device="cpu").numpy()
+        self.data.ctrl[:] = ctrl
         mujoco.mj_step(self.model, self.data, nstep=self.sim_frames_per_step)
         # mujoco.mj_forward(self.model, self.data)
 
@@ -229,3 +230,19 @@ class Go2Env(MujocoEnv):
 
     def get_sensor_state_array(self) -> T.Tensor:
         return T.concat([*self.get_sensor_state_dict().values()]).to(dtype=T.float32)
+
+
+
+class MultiMujocoEnv:
+
+    def __init__(
+        self, 
+        env: MujocoEnv,
+        copies: int
+    ):
+        self.envs = [deepcopy(env) for _ in range(copies)]
+
+    def step(self, actions):
+        for e in self.envs:
+            e.step(action=action)
+        

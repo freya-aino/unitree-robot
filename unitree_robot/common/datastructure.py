@@ -63,10 +63,10 @@ class MultiUnrollDataset(Dataset):
 
     def __getitem__(self, idx: int):
         return {
-            "observation": self.observations[idx],
+            "observations": self.observations[idx],
             "logits": self.logits[idx],
-            "action": self.action[idx],
-            "reward": self.reward[idx],
+            "actions": self.action[idx],
+            "rewards": self.reward[idx],
         }
 
     def preprocess(self, num_unrolls: int, num_minibatches: int, minibatch_size: int):

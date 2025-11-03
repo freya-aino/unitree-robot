@@ -43,8 +43,12 @@ class PPOAgent(nn.Module):
         loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
         return Normal(
             loc=loc,
-            scale=F.softplus(scale) + 0.001,
+            scale=F.softplus(scale),
         )
+        # return Normal(
+        #     loc=loc,
+        #     scale=0.001 # TODO for simulating a real world discrete control signal
+        # )
 
     def get_action(self, observation: T.Tensor):
         # observation = self.normalize(observation
@@ -88,6 +92,9 @@ class PPOAgent(nn.Module):
         actions = actions[:, :-1]
         logits = logits[:, :-1]
 
+        # print("rewards", rewards.min(), rewards.max())
+        # print("values", values.min(), values.max())
+
         # compute GAE
         with T.no_grad():
             # calculate deltas from values to rewards
@@ -98,7 +105,7 @@ class PPOAgent(nn.Module):
             # less than 0 means its worse than expected
             deltas = rewards + self.discounting * values_t_1 - values_t
 
-            print("deltas:", deltas.min(), deltas.max(), deltas.isnan().any())
+            # print("deltas:", deltas.min(), deltas.max(), deltas.isnan().any())
 
             # calculate discounted deltas
             powers = (
@@ -109,12 +116,12 @@ class PPOAgent(nn.Module):
             discount_matrix = T.triu(decay_factor).unsqueeze(0)
             discounted_deltas = T.matmul(discount_matrix, deltas)
 
-            print(
-                "discounted deltas:",
-                discounted_deltas.min(),
-                discounted_deltas.max(),
-                discounted_deltas.isnan().any(),
-            )
+            # print(
+            #     "discounted deltas:",
+            #     discounted_deltas.min(),
+            #     discounted_deltas.max(),
+            #     discounted_deltas.isnan().any(),
+            # )
 
             vs_t = discounted_deltas + values_t
             vs_t_1 = T.cat([vs_t[:, 1:], bootstrap_value], 1)
@@ -125,14 +132,15 @@ class PPOAgent(nn.Module):
         policy_dist = self.create_distribution(policy_logits)
         policy_action_log_probs = policy_dist.log_prob(actions)
 
-        print(
-            "policy dist",
-            policy_dist.loc.min(),
-            policy_dist.loc.max(),
-            policy_dist.scale.min(),
-            policy_dist.scale.max(),
-        )
-        print(behaviour_action_log_probs.mean(), policy_action_log_probs.mean())
+        # print(
+        #     "policy dist",
+        #     policy_dist.loc.min(),
+        #     policy_dist.loc.max(),
+        #     policy_dist.scale.min(),
+        #     policy_dist.scale.max(),
+        # )
+        # print("behaviour action", behaviour_action_log_probs.mean(), policy_action_log_probs.mean())
+        # print("vs_t", vs_t.min(), vs_t.max())
 
         rho_s = T.exp(policy_action_log_probs - behaviour_action_log_probs)
         surrogate_loss1 = rho_s * advantages
@@ -144,6 +152,10 @@ class PPOAgent(nn.Module):
 
         # Entropy loss
         entropy_loss = -policy_dist.entropy().mean()
+
+        # print(f"policy loss: {policy_loss}")
+        # print(f"value loss: {value_loss}")
+        # print(f"entropy loss: {entropy_loss}")
 
         return {
             "policy_loss": policy_loss,

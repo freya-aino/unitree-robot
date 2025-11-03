@@ -40,8 +40,6 @@ class KeyboardController:
 
             self.lock.acquire() 
 
-            for event in events:
-                if event.code == 
 
             self.lock.release()
     

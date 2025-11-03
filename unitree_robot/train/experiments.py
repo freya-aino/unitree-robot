@@ -6,6 +6,7 @@ from unitree_robot.train.rewards import (
     EnergyReward,
     BodyHeightReward,
     JointLimitReward,
+    DistanceFromCenterReward,
 )
 
 
@@ -27,6 +28,7 @@ class StandUpExperiment(Experiment):
         body_angle_reward_scale: float,
         body_height_reward_scale: float,
         energy_reward_scale: float,
+        distance_from_origin_reward_scale: float,
         # joint_limit_reward_scale: float
     ):
         self.rewards = {
@@ -34,13 +36,12 @@ class StandUpExperiment(Experiment):
             # "base_orientation_reward": BaseOrientationReward(
             #     body_name=body_name, scale=body_angle_reward_scale
             # ),
-            "placeholder": lambda _: 0.0,
+            "distance_from_origin_reward": DistanceFromCenterReward(scale=distance_from_origin_reward_scale)
             # "energy_reward": EnergyReward(scale=energy_reward_scale),
+            # "joing_limit_loss": JointLimitReward(scale=joint_limit_reward_scale)
         }
-        # self.joint_limit_loss = JointLimitReward(scale=joint_limit_reward_scale)
 
         super().__init__()
 
     def __call__(self, mj_data: MjData):
-        # stand_up_reward = self.base_orientation_reward(mj_data) + self.energy_reward(mj_data) + self.base_height_reward(mj_data)
         return super().__call__(**{k: self.rewards[k](mj_data) for k in self.rewards})

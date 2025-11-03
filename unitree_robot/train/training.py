@@ -37,6 +37,7 @@ class Trainer:
         self.env = env
         self.observation_space_size = self.env.get_observation_size()
         self.action_space_size = self.env.get_action_size()
+        self.max_gradient_norm = max_gradient_norm
 
         # -- create agent
         self.agent = PPOAgent(
@@ -52,7 +53,6 @@ class Trainer:
 
         # -- set up optimizer
         self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
-        nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=max_gradient_norm)
 
         # -- set experiment
         self.experiment = experiment
@@ -81,8 +81,12 @@ class Trainer:
         # env warmup
         self.env.reset(seed=seed)
         action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32)
-        last_observation, _ = self.env.step(action=action)
-        last_observation = last_observation.to(dtype=T.float32)
+        last_observation, mj_data = self.env.step(action=action)
+        last_observation = last_observation.to(dtype=T.float32, device=self.device)
+
+        
+        mean_rewards = {r: 0.0 for r in self.experiment(mj_data=mj_data)}
+
 
         for j in range(0, unroll_length):
             assert ~last_observation.isnan().any(), "NaN observation detected"
@@ -92,16 +96,17 @@ class Trainer:
             logits, action = self.agent.get_action(observation=last_observation)
 
             # squeeze the batch dimension and the sequence dimension
-            action = action.cpu().squeeze()
-            logits = logits.cpu().squeeze()
+            action = action.cpu().squeeze().to(device="cpu")
+            logits = logits.cpu().squeeze().to(device="cpu")
 
             # take a step in the environment and get its return values like the local reward for taking that action.
             observation, mj_data = self.env.step(action=action)
             rewards = self.experiment(mj_data=mj_data)
-
-            # TODO: log rewards
-
             scaled_reward_sum = T.Tensor([*rewards.values()]).sum()
+
+            # log rewards
+            for r in rewards:
+                mean_rewards[r] += rewards[r] / unroll_length
 
             assert ~scaled_reward_sum.isnan().any(), "NaN reward detected"
             assert ~scaled_reward_sum.isinf().any(), "Inf reward detected"
@@ -116,9 +121,9 @@ class Trainer:
             unroll.reward[j, :] = scaled_reward_sum
             # unrolls.done[i,j] = done
 
-            last_observation = observation.to(dtype=T.float32)
+            last_observation = observation.to(dtype=T.float32, device=self.device)
 
-        return unroll
+        return unroll, mean_rewards
 
     def train(
         self,
@@ -149,10 +154,19 @@ class Trainer:
             # Unroll a couple of times
             self.agent.eval()
             with T.no_grad():
-                unrolls = [
-                    self.unroll(unroll_length=unroll_length, seed=seed)
-                    for _ in range(num_unrolls)
-                ]
+                unrolls = []
+                mean_rewards = {}
+                for _ in range(num_unrolls):
+                    unroll, mr = self.unroll(unroll_length=unroll_length, seed=seed)
+                    unrolls.append(unroll)
+                    for k in mr:
+                        if k in mean_rewards.keys():
+                            mean_rewards[k] += mr[k] / num_unrolls
+                        else:
+                            mean_rewards[k] = mr[k] / num_unrolls
+
+            for k in mean_rewards:
+                mlflow.log_metric(k, mean_rewards[k], step=e)
 
             mlflow.log_metric(
                 "mean_time_per_unroll_step_ms",
@@ -207,7 +221,7 @@ class Trainer:
                 multi_unroll_dataset,
                 batch_size=train_batch_size,
                 shuffle=True,
-                pin_memory_device=self.device,
+                pin_memory=True,
             )
 
             # --- TRAINING
@@ -218,20 +232,21 @@ class Trainer:
                 "policy_loss": 0,
                 "value_loss": 0,
                 "entropy_loss": 0,
-                "mean_loss": 0,
             }
             for _, batch in enumerate(dataloader):
+                observations = batch["observations"].to(self.device)
+                logits = batch["logits"].to(self.device)
+                actions = batch["actions"].to(self.device)
+                rewards = batch["rewards"].to(self.device)
+
                 losses = self.agent(
-                    observations=batch["observation"],
-                    logits=batch["logits"],
-                    actions=batch["action"],
-                    rewards=batch["reward"],
+                    observations=observations,
+                    logits=logits,
+                    actions=actions,
+                    rewards=rewards,
                 )
 
-                policy_loss = losses["policy_loss"] * policy_loss_scale
-                value_loss = losses["value_loss"] * value_loss_scale
-                entropy_loss = losses["entropy_loss"] * entropy_loss_scale
-
+                # logging
                 loss_averages["policy_loss"] += (
                     losses["policy_loss"].detach().cpu().item()
                 )
@@ -241,6 +256,11 @@ class Trainer:
                 loss_averages["entropy_loss"] += (
                     losses["entropy_loss"].detach().cpu().item()
                 )
+
+
+                policy_loss = losses["policy_loss"] * policy_loss_scale
+                value_loss = losses["value_loss"] * value_loss_scale
+                entropy_loss = losses["entropy_loss"] * entropy_loss_scale
 
                 assert ~policy_loss.isnan(), f"policy_loss is NaN"
                 assert ~policy_loss.isinf(), f"policy_loss is Inf"
@@ -253,6 +273,7 @@ class Trainer:
                 loss = policy_loss + value_loss + entropy_loss
                 self.optim.zero_grad()
                 loss.backward()
+                nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.max_gradient_norm)
                 self.optim.step()
 
             for k in loss_averages:

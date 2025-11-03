@@ -136,3 +136,14 @@ class JointLimitReward(Reward):
         # TODO: quadrating the loss might be desirable - check when training
 
         return super().__call__(-loss)
+
+
+class DistanceFromCenterReward(Reward):
+    def __init__(self, scale: float = 1):
+        super().__init__(scale)
+    def __call__(self, data: MjData) -> float:
+
+        pos = data.body("base_link").xpos
+        mag = np.sqrt((pos ** 2).sum())
+
+        return super().__call__(reward=mag)
