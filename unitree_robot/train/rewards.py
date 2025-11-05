@@ -1,7 +1,7 @@
 from abc import ABC
 import numpy as np
 from typing import List
-from mujoco import MjData
+from mujoco import MjData, MjModel
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 from torch.nested import to_padded_tensor
@@ -107,43 +107,52 @@ class EnergyReward(Reward):
 
     def __call__(self, data: MjData):
         actuator_force = np.mean(np.abs(data.actuator_force))
-
-        # weight_energy = 0.1 # TODO
-        # loss_energy = weight_energy * jp.sum(jp.abs(actuator_force))
-
         return super().__call__(-actuator_force)
 
 
 class JointLimitReward(Reward):
-    def __init__(self, scale: float = 1.0):
+    def __init__(
+        self,
+        mj_model: MjModel,
+        scale: float = 1.0,
+        joint_names: List = [
+            "FL_calf_joint",
+            "FL_hip_joint",
+            "FL_thigh_joint",
+            "FR_calf_joint",
+            "FR_hip_joint",
+            "FR_thigh_joint",
+            "RL_calf_joint",
+            "RL_hip_joint",
+            "RL_thigh_joint",
+            "RR_calf_joint",
+            "RR_hip_joint",
+            "RR_thigh_joint",
+        ],
+    ):
+        self.joint_names = joint_names
+        self.joint_ranges_min, self.joint_ranges_max = np.stack(
+            [mj_model.joint(n).range for n in joint_names]
+        ).T
         super().__init__(scale=scale)
 
     def __call__(self, data: MjData):
-        qpos = data.qpos[7:]  # Gibt die Positions-Werte für die 12 Beingelenke aus
-        jnt_range = model.jnt_range[
-            1:
-        ]  # Gibt die Gelenk-Limits für die 12 Beingelenke aus
-        jnt_center = (
-            (jnt_range[:, 0] + jnt_range[:, 1]) / 2
-        )  # jnt_range[:, 0]: Min-Werte aller Gelenke/ jnt_range[:, 1]: Max Werte aller Gelenke
-        jnt_half_range = (
-            jnt_range[:, 1] - jnt_range[:, 0]
-        ) / 2  # Berechnet die halbe Reichweite
-        normalized_deviation = (
-            (qpos - jnt_center) / jnt_half_range
-        )  # Normalisiert die Abweichung zwischen der tatsächlichen Gelenkposition und dessen Center auf -1 bis 1
-        loss = np.mean(np.abs(normalized_deviation))
-        # TODO: quadrating the loss might be desirable - check when training
-
-        return super().__call__(-loss)
+        current_joint_pos = np.concatenate(
+            [data.joint(n).qpos for n in self.joint_names]
+        )
+        joint_min_max_scaled = (current_joint_pos - self.joint_ranges_min) / (
+            self.joint_ranges_max - self.joint_ranges_min
+        )
+        joint_scaled_to_center = ((joint_min_max_scaled - 0.5) * 2) ** 2
+        return super().__call__(-joint_scaled_to_center.mean())
 
 
 class DistanceFromCenterReward(Reward):
     def __init__(self, scale: float = 1):
         super().__init__(scale)
-    def __call__(self, data: MjData) -> float:
 
+    def __call__(self, data: MjData) -> float:
         pos = data.body("base_link").xpos
-        mag = np.sqrt((pos ** 2).sum())
+        mag = np.sqrt((pos**2).sum())
 
         return super().__call__(reward=mag)

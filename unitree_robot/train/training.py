@@ -20,10 +20,12 @@ class Trainer:
         network_hidden_size: int,
         network_layers: int,
         reward_scaling: float,
+        lambda_: float,
+        epsilon: float,
         discounting: float,
         learning_rate: float,
+        max_gradient_norm: float,
         optimizer_fn=optim.AdamW,
-        max_gradient_norm: float = 0.5,
     ) -> None:
         # -- set device
         if T.cuda.is_available() and "cuda" in device:
@@ -47,6 +49,8 @@ class Trainer:
             network_hidden_size=network_hidden_size,
             network_layers=network_layers,
             discounting=discounting,
+            lambda_=lambda_,
+            epsilon=epsilon,
             reward_scaling=reward_scaling,
             device=device,
         ).to(device=device)
@@ -84,9 +88,7 @@ class Trainer:
         last_observation, mj_data = self.env.step(action=action)
         last_observation = last_observation.to(dtype=T.float32, device=self.device)
 
-        
         mean_rewards = {r: 0.0 for r in self.experiment(mj_data=mj_data)}
-
 
         for j in range(0, unroll_length):
             assert ~last_observation.isnan().any(), "NaN observation detected"
@@ -102,14 +104,14 @@ class Trainer:
             # take a step in the environment and get its return values like the local reward for taking that action.
             observation, mj_data = self.env.step(action=action)
             rewards = self.experiment(mj_data=mj_data)
-            scaled_reward_sum = T.Tensor([*rewards.values()]).sum()
+            scaled_reward_mean = T.Tensor([*rewards.values()]).mean()
 
             # log rewards
             for r in rewards:
                 mean_rewards[r] += rewards[r] / unroll_length
 
-            assert ~scaled_reward_sum.isnan().any(), "NaN reward detected"
-            assert ~scaled_reward_sum.isinf().any(), "Inf reward detected"
+            assert ~scaled_reward_mean.isnan().any(), "NaN reward detected"
+            assert ~scaled_reward_mean.isinf().any(), "Inf reward detected"
             assert ~action.isnan().any(), "NaN action detected"
             assert ~action.isinf().any(), "Inf action detected"
             assert ~logits.isnan().any(), "NaN logits detected"
@@ -118,7 +120,7 @@ class Trainer:
             unroll.observation[j, :] = last_observation[:]
             unroll.logits[j, :] = logits[:]
             unroll.action[j, :] = action[:]
-            unroll.reward[j, :] = scaled_reward_sum
+            unroll.reward[j, :] = scaled_reward_mean
             # unrolls.done[i,j] = done
 
             last_observation = observation.to(dtype=T.float32, device=self.device)
@@ -257,7 +259,6 @@ class Trainer:
                     losses["entropy_loss"].detach().cpu().item()
                 )
 
-
                 policy_loss = losses["policy_loss"] * policy_loss_scale
                 value_loss = losses["value_loss"] * value_loss_scale
                 entropy_loss = losses["entropy_loss"] * entropy_loss_scale
@@ -273,7 +274,9 @@ class Trainer:
                 loss = policy_loss + value_loss + entropy_loss
                 self.optim.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.agent.parameters(), max_norm=self.max_gradient_norm)
+                nn.utils.clip_grad_norm_(
+                    self.agent.parameters(), max_norm=self.max_gradient_norm
+                )
                 self.optim.step()
 
             for k in loss_averages:

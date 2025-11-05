@@ -1,11 +1,8 @@
-import math
-from mpmath import polar
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from unitree_robot.common.networks import BasicPolicyValueNetwork
-# from unitree_robot.common.datastructure import UnrollData
 
 
 class PPOAgent(nn.Module):
@@ -19,6 +16,8 @@ class PPOAgent(nn.Module):
         network_hidden_size: int,
         network_layers: int,
         discounting: float,
+        lambda_: float,
+        epsilon: float,
         reward_scaling: float,
         device: str,
     ):
@@ -34,16 +33,15 @@ class PPOAgent(nn.Module):
 
         self.discounting = discounting
         self.reward_scaling = reward_scaling
-        self.lambda_ = 0.95
-        self.epsilon = 0.3
-
+        self.lambda_ = lambda_
+        self.epsilon = epsilon
         self.device = device
 
     def create_distribution(self, logits: T.Tensor):
         loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
         return Normal(
             loc=loc,
-            scale=F.softplus(scale),
+            scale=F.softplus(scale) + 0.001,
         )
         # return Normal(
         #     loc=loc,

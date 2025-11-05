@@ -1,5 +1,6 @@
 from copy import deepcopy, copy
 
+import numpy as np
 import mujoco
 import torch as T
 import gymnasium as gym
@@ -27,8 +28,6 @@ from mujoco import MjData, MjModel
 #     # "lookat": np.array((0.0, 0.0, 2.0)),
 #     "elevation": -20.0,
 # }
-
-
 
 
 class MujocoEnv(gym.Env):
@@ -94,6 +93,8 @@ class MujocoEnv(gym.Env):
 
     def reset(self, seed: int):
         # assert self.observation_space, "observation space not set"
+        np.random.seed(seed)
+        T.random.manual_seed(seed)
         mujoco.mj_resetData(self.model, self.data)
         # TODO: apply initial noise
         # self.set_stat(self.init_qpos, self.init_qvel)
@@ -232,17 +233,10 @@ class Go2Env(MujocoEnv):
         return T.concat([*self.get_sensor_state_dict().values()]).to(dtype=T.float32)
 
 
-
 class MultiMujocoEnv:
-
-    def __init__(
-        self, 
-        env: MujocoEnv,
-        copies: int
-    ):
+    def __init__(self, env: MujocoEnv, copies: int):
         self.envs = [deepcopy(env) for _ in range(copies)]
 
     def step(self, actions):
         for e in self.envs:
             e.step(action=action)
-        
