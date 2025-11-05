@@ -1,4 +1,6 @@
 import time
+from random import randint
+
 from tqdm import tqdm
 import torch as T
 import torch.nn as nn
@@ -123,6 +125,10 @@ class Trainer:
             unroll.reward[j, :] = scaled_reward_mean
             # unrolls.done[i,j] = done
 
+            for n in self.env.actuator_names:
+                value = self.env.data.actuator(n).velocity[0]
+                mlflow.log_metric(f"actuator velocity - {n}", value, step = j)
+
             last_observation = observation.to(dtype=T.float32, device=self.device)
 
         return unroll, mean_rewards
@@ -159,7 +165,7 @@ class Trainer:
                 unrolls = []
                 mean_rewards = {}
                 for _ in range(num_unrolls):
-                    unroll, mr = self.unroll(unroll_length=unroll_length, seed=seed)
+                    unroll, mr = self.unroll(unroll_length=unroll_length, seed=e)
                     unrolls.append(unroll)
                     for k in mr:
                         if k in mean_rewards.keys():

@@ -76,7 +76,14 @@ class PPOAgent(nn.Module):
         logits: T.Tensor,
         actions: T.Tensor,
         rewards: T.Tensor,
+        moving_average_window_size: int = 16
     ):
+
+        # moving average rewards
+        rewards = F.avg_pool1d(
+            rewards.transpose(1, 2), stride=1, kernel_size=moving_average_window_size, padding=moving_average_window_size//2
+        ).transpose(1, 2)[:, :-1, :]
+
         policy_logits = self.network.policy_forward(observations)
         values = self.network.value_forward(observations)
 
