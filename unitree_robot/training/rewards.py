@@ -64,20 +64,6 @@ class BodyDistanceReward(Reward):
         super().__init__(scale=scale)
 
     def __call__(self, data: MjData) -> float:
-        # target_height = 0.3  # TODO
-
-        # global_pos = data.xpos
-        # foot_z_mean_position = np.mean(global_pos[[5, 9, 13, 17], 2])  # global_pos[[5,9,13,17], 2] = z-values of foots
-        # actual_height = global_pos[1, 2] - z_mean  # global_pos[1, 2] = z-value of the basis
-        # error_height = np.abs(actual_height - target_height)
-
-        # weight_height = 1.0 # TODO
-        # loss_height = weight_height * np.abs(error_height)
-
-        # case 1: actual_heigt < target_height -> error_height < 0 -> loss_height > 0
-        # case 2: actual_heigt > target_height -> error_height > 0 -> loss_height > 0
-        # case 3: actual_heigt = target_height -> error_height = 0 -> loss_height = 0
-
         from_positions = np.stack([data.body(n).xpos for n in self.body_names_from])
         to_positions = np.stack([data.body(n).xpos for n in self.body_names_to])
 

@@ -16,8 +16,8 @@ class NETWORK_INTERFACE(Enum):
 class UnrollData(BaseModel):
     observation: Tensor
     logits: Tensor
-    action: Tensor
-    reward: Tensor
+    actions: Tensor
+    rewards: Tensor
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -31,8 +31,8 @@ class UnrollData(BaseModel):
         return UnrollData(
             observation=zeros(size=[unroll_length, observation_size], device="cpu"),
             logits=zeros(size=[unroll_length, action_size * 2], device="cpu"),
-            action=zeros(size=[unroll_length, action_size], device="cpu"),
-            reward=zeros(size=[unroll_length, 1], device="cpu"),
+            actions=zeros(size=[unroll_length, action_size], device="cpu"),
+            rewards=zeros(size=[unroll_length, 1], device="cpu"),
         )
 
 

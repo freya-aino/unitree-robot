@@ -1,5 +1,6 @@
 from copy import deepcopy, copy
 
+import random
 import numpy as np
 import mujoco
 import torch as T
@@ -23,14 +24,6 @@ from mujoco import MjData, MjModel
 # )
 
 
-# DEFAULT_CAMERA_CONFIG = {
-#     "trackbodyid": 1,
-#     "distance": 4.0,
-#     # "lookat": np.array((0.0, 0.0, 2.0)),
-#     "elevation": -20.0,
-# }
-
-
 class MujocoEnv(gym.Env):
     """Superclass for all MuJoCo environments."""
 
@@ -41,8 +34,9 @@ class MujocoEnv(gym.Env):
         camera_name: str,
         width: int = 1920,
         height: int = 1080,
-        render_fps: int = 60,
         initial_noise_scale: float = 0.001,
+        enable_renderer: bool = False,
+        render_fps: int = 60,
     ):
         # -- metadata
         self.metadata["render_modes"] = ["human"]
@@ -50,25 +44,26 @@ class MujocoEnv(gym.Env):
         self.metadata["torch"] = True
 
         # -- load mujoco model
-        self.model_path = model_path
-        assert path.exists(self.model_path), f"File {self.model_path} does not exist"
+        assert path.exists(model_path), f"File {model_path} does not exist"
 
-        self.model = MjModel.from_xml_path(self.model_path)
+        self.model = MjModel.from_xml_path(model_path)
         self.data = MjData(self.model)
 
         # -- visualization
         # "render_fps": int(np.round(1.0 / self.dt)), # TODO
-        self.viewer = MujocoRenderer(
-            model=self.model,
-            data=self.data,
-            # default_cam_config=DEFAULT_CAMERA_CONFIG,
-            width=width,
-            height=height,
-            camera_name=camera_name,
-        )
+        self.renderer_enabled = enable_renderer
+        if self.renderer_enabled:
+            self.viewer = MujocoRenderer(
+                model=self.model,
+                data=self.data,
+                # default_cam_config=DEFAULT_CAMERA_CONFIG,
+                width=width,
+                height=height,
+                camera_name=camera_name,
+            )
 
         # -- set relevant control spaces, observation spaces and mujoco data
-        # self.observation_space = observation_space
+        self.observation_space_size = self.get_observation_size()
         ctrl_range = self.model.actuator_ctrlrange.copy().astype(np_float32)
         low, high = ctrl_range.T
         self.action_space = spaces.Box(low=low, high=high, dtype=np_float32)
@@ -86,45 +81,38 @@ class MujocoEnv(gym.Env):
         super().__init__()
 
     def get_observation_size(self) -> int:
-        return T.flatten(self._get_observation()).shape[0]
+        return self._get_observation().shape[0]
 
     def get_action_size(self) -> int:
-        return T.flatten(T.Tensor(self.action_space.sample())).shape[0]
+        return T.Tensor(self.action_space.sample()).shape[0]
 
-    def _get_observation(self):
+    def _get_observation(self) -> T.Tensor:
         raise NotImplementedError
 
     def reset(self, seed: int):
-
-        np.random.seed(seed)
-
-        # assert self.observation_space, "observation space not set"
+        # set seed
+        random.seed(seed)
         np.random.seed(seed)
         T.random.manual_seed(seed)
-        mujoco.mj_resetData(self.model, self.data)
-        # TODO: apply initial noise
 
-        self.data.qpos += np.random.normal(size=self.init_qpos.shape).astype(np_float32) * self.initial_noise_scale
+        # assert self.observation_space, "observation space not set"
+        mujoco.mj_resetData(self.model, self.data)
+
+        # apply initial noise
+        # self.data.qpos += np.random.normal(size=self.init_qpos.shape).astype(np_float32) * self.initial_noise_scale
 
         # self.set_stat(self.init_qpos, self.init_qvel)
-        # return super().reset(seed=seed)
+        return self._get_observation()
 
     def render(self):
+        assert self.renderer_enabled, (
+            "trying to call render without renderer, pass 'enable_renderer=True' to the environment"
+        )
         self.viewer.render("human")
 
-    def close(self):
-        if self.viewer:
-            self.viewer.close()
-            self.viewer = None
-
     def step(self, action: T.Tensor) -> tuple[T.Tensor, MjData]:
-        # assert self.observation_space, "observation space not set"
-
         self._do_simulation(ctrl=action)
-        # obs = self._get_observation()
         obs = self._get_observation()
-
-        # super().step()
         return obs, copy(self.data)
 
     def _do_simulation(self, ctrl: T.Tensor):
@@ -151,7 +139,6 @@ class Go2Env(MujocoEnv):
     """Superclass for MuJoCo environments."""
 
     def __init__(self, **kwargs):
-
         self.actuator_names = [
             "FL_calf",
             "FL_hip",
@@ -164,54 +151,52 @@ class Go2Env(MujocoEnv):
             "RL_thigh",
             "RR_calf",
             "RR_hip",
-            "RR_thigh"
+            "RR_thigh",
         ]
 
-        self.sensor_names = [
-            "FL_calf_pos",
-            "FL_calf_torque",
-            "FL_calf_vel",
-            "FL_hip_pos",
-            "FL_hip_torque",
-            "FL_hip_vel",
-            "FL_thigh_pos",
-            "FL_thigh_torque",
-            "FL_thigh_vel",
-            "FR_calf_pos",
-            "FR_calf_torque",
-            "FR_calf_vel",
-            "FR_hip_pos",
-            "FR_hip_torque",
-            "FR_hip_vel",
-            "FR_thigh_pos",
-            "FR_thigh_torque",
-            "FR_thigh_vel",
-            "RL_calf_pos",
-            "RL_calf_torque",
-            "RL_calf_vel",
-            "RL_hip_pos",
-            "RL_hip_torque",
-            "RL_hip_vel",
-            "RL_thigh_pos",
-            "RL_thigh_torque",
-            "RL_thigh_vel",
-            "RR_calf_pos",
-            "RR_calf_torque",
-            "RR_calf_vel",
-            "RR_hip_pos",
-            "RR_hip_torque",
-            "RR_hip_vel",
-            "RR_thigh_pos",
-            "RR_thigh_torque",
-            "RR_thigh_vel",
-            "frame_pos",
-            "frame_vel"
-            # 'imu_acc',
-            # 'imu_gyro',
-            # 'imu_quat'
-        ]
-
-        # self._set_observation_space()
+        # self.sensor_names = [
+        #     "FL_calf_pos",
+        #     "FL_calf_torque",
+        #     "FL_calf_vel",
+        #     "FL_hip_pos",
+        #     "FL_hip_torque",
+        #     "FL_hip_vel",
+        #     "FL_thigh_pos",
+        #     "FL_thigh_torque",
+        #     "FL_thigh_vel",
+        #     "FR_calf_pos",
+        #     "FR_calf_torque",
+        #     "FR_calf_vel",
+        #     "FR_hip_pos",
+        #     "FR_hip_torque",
+        #     "FR_hip_vel",
+        #     "FR_thigh_pos",
+        #     "FR_thigh_torque",
+        #     "FR_thigh_vel",
+        #     "RL_calf_pos",
+        #     "RL_calf_torque",
+        #     "RL_calf_vel",
+        #     "RL_hip_pos",
+        #     "RL_hip_torque",
+        #     "RL_hip_vel",
+        #     "RL_thigh_pos",
+        #     "RL_thigh_torque",
+        #     "RL_thigh_vel",
+        #     "RR_calf_pos",
+        #     "RR_calf_torque",
+        #     "RR_calf_vel",
+        #     "RR_hip_pos",
+        #     "RR_hip_torque",
+        #     "RR_hip_vel",
+        #     "RR_thigh_pos",
+        #     "RR_thigh_torque",
+        #     "RR_thigh_vel",
+        #     "frame_pos",
+        #     "frame_vel",
+        #     # 'imu_acc',
+        #     # 'imu_gyro',
+        #     # 'imu_quat'
+        # ]
 
         super().__init__(**kwargs)
 
@@ -221,20 +206,25 @@ class Go2Env(MujocoEnv):
         #         shape=[len(self.sensor_names)],
         #         dtype=np.float32,
         #     )
-        self.observation_space_size = self.get_observation_size()
+        # self.observation_space_size = self.get_observation_size()
 
     def _get_observation(self) -> T.Tensor:
-        return self.get_sensor_state_array()
+        return T.from_numpy(
+            np.concatenate([self.data.qpos.ravel(), self.data.qvel.ravel()]).astype(
+                np.float32
+            ),
+        )
+        # return self.get_sensor_state_array()
         # return self.observation_space.sample() # TODO
 
-    def get_sensor_state_dict(self) -> Dict[str, T.Tensor]:
-        return {
-            n: T.Tensor(self.data.sensor(n).data).to(dtype=T.float32)
-            for n in self.sensor_names
-        }
+    # def get_sensor_state_dict(self) -> Dict[str, T.Tensor]:
+    #     return {
+    #         n: T.Tensor(self.data.sensor(n).data).to(dtype=T.float32)
+    #         for n in self.sensor_names
+    #     }
 
-    def get_sensor_state_array(self) -> T.Tensor:
-        return T.concat([*self.get_sensor_state_dict().values()]).to(dtype=T.float32)
+    # def get_sensor_state_array(self) -> T.Tensor:
+    #     return T.concat([*self.get_sensor_state_dict().values()]).to(dtype=T.float32)
 
 
 class MultiMujocoEnv:

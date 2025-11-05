@@ -5,29 +5,30 @@ from typing import Tuple
 
 
 class NetworkBlock(nn.Module):
-    def __init__(self, input_size: int, output_size: int, act_f):
+    def __init__(self, input_size: int, output_size: int, final_act_f):
         super().__init__()
 
-        # self.bn = nn.BatchNorm1d(input_size)
-        # self.ln = nn.LayerNorm(input_size)
-        #
-        # self.nn1 = nn.Linear(input_size, input_size)
-        # self.nn2 = nn.Linear(input_size, input_size)
+        self.bn = nn.BatchNorm1d(input_size)
+        self.ln = nn.LayerNorm(input_size)
+
+        self.nn1 = nn.Linear(input_size, input_size)
+        self.nn2 = nn.Linear(input_size, input_size)
         self.nn3 = nn.Linear(input_size, output_size)
 
-        self.act = act_f()
+        self.final_act = final_act_f()
+        self.act = nn.ReLU6()
 
     def forward(self, x: T.Tensor) -> T.Tensor:
-        # x = self.act(self.ln(self.nn1(x)))
-        # x = self.act(self.bn(self.nn2(x).permute(0, 2, 1)).permute(0, 2, 1))
-        return self.act(self.nn3(x))
+        x = self.act(self.ln(self.nn1(x)))
+        x = self.act(self.bn(self.nn2(x).permute(0, 2, 1)).permute(0, 2, 1))
+        return self.final_act(self.nn3(x))
 
 
 class BasicPolicyValueNetwork(nn.Module):
     def __init__(
         self,
         input_size: int,
-        network_layers: int,
+        num_hidden_layers: int,
         policy_output_size: int,
         value_output_size: int,
         hidden_size: int,
@@ -35,21 +36,21 @@ class BasicPolicyValueNetwork(nn.Module):
         super().__init__()
 
         self.policy_network = nn.Sequential(
-            NetworkBlock(input_size, hidden_size, nn.ELU),
+            NetworkBlock(input_size, hidden_size, nn.ReLU6),
             *[
-                NetworkBlock(hidden_size, hidden_size, nn.ELU)
-                for _ in range(network_layers)
+                NetworkBlock(hidden_size, hidden_size, nn.ReLU6)
+                for _ in range(num_hidden_layers)
             ],
             NetworkBlock(hidden_size, policy_output_size, nn.Identity),
         )
 
         self.value_network = nn.Sequential(
-            NetworkBlock(input_size, hidden_size, nn.ELU),
+            NetworkBlock(input_size, hidden_size, nn.ReLU6),
             *[
-                NetworkBlock(hidden_size, hidden_size, nn.ELU)
-                for _ in range(network_layers)
+                NetworkBlock(hidden_size, hidden_size, nn.ReLU6)
+                for _ in range(num_hidden_layers)
             ],
-            NetworkBlock(hidden_size, value_output_size, nn.ReLU),
+            NetworkBlock(hidden_size, value_output_size, nn.Identity),
         )
 
     def policy_forward(self, x: T.Tensor) -> T.Tensor:

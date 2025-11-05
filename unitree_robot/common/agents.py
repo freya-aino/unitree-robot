@@ -14,7 +14,7 @@ class PPOAgent(nn.Module):
         policy_output_size: int,
         value_output_size: int,
         network_hidden_size: int,
-        network_layers: int,
+        num_hidden_layers: int,
         discounting: float,
         lambda_: float,
         epsilon: float,
@@ -25,7 +25,7 @@ class PPOAgent(nn.Module):
 
         self.network = BasicPolicyValueNetwork(
             input_size=input_size,
-            network_layers=network_layers,
+            num_hidden_layers=num_hidden_layers,
             policy_output_size=policy_output_size,
             value_output_size=value_output_size,
             hidden_size=network_hidden_size,
@@ -76,12 +76,14 @@ class PPOAgent(nn.Module):
         logits: T.Tensor,
         actions: T.Tensor,
         rewards: T.Tensor,
-        moving_average_window_size: int = 16
+        moving_average_window_size: int = 16,
     ):
-
         # moving average rewards
         rewards = F.avg_pool1d(
-            rewards.transpose(1, 2), stride=1, kernel_size=moving_average_window_size, padding=moving_average_window_size//2
+            rewards.transpose(1, 2),
+            stride=1,
+            kernel_size=moving_average_window_size,
+            padding=moving_average_window_size // 2,
         ).transpose(1, 2)[:, :-1, :]
 
         policy_logits = self.network.policy_forward(observations)
@@ -91,26 +93,14 @@ class PPOAgent(nn.Module):
         values_t_1 = values[:, 1:]
         bootstrap_value = values[:, -1:]
         values_t = values[:, :-1]
-
         policy_logits = policy_logits[:, :-1]
         rewards = rewards[:, :-1]
         actions = actions[:, :-1]
         logits = logits[:, :-1]
 
-        # print("rewards", rewards.min(), rewards.max())
-        # print("values", values.min(), values.max())
-
         # compute GAE
         with T.no_grad():
-            # calculate deltas from values to rewards
-            # basically a value from how the current reward + the value from the next step forward
-            # compares to the expected value from this step forward
-            # (you can call this a surprise value)
-            # larger than 0 means its better than expected
-            # less than 0 means its worse than expected
             deltas = rewards + self.discounting * values_t_1 - values_t
-
-            # print("deltas:", deltas.min(), deltas.max(), deltas.isnan().any())
 
             # calculate discounted deltas
             powers = (
@@ -121,13 +111,6 @@ class PPOAgent(nn.Module):
             discount_matrix = T.triu(decay_factor).unsqueeze(0)
             discounted_deltas = T.matmul(discount_matrix, deltas)
 
-            # print(
-            #     "discounted deltas:",
-            #     discounted_deltas.min(),
-            #     discounted_deltas.max(),
-            #     discounted_deltas.isnan().any(),
-            # )
-
             vs_t = discounted_deltas + values_t
             vs_t_1 = T.cat([vs_t[:, 1:], bootstrap_value], 1)
             advantages = rewards + self.discounting * vs_t_1 - values_t
@@ -136,16 +119,6 @@ class PPOAgent(nn.Module):
         behaviour_action_log_probs = behaviour_dist.log_prob(actions)
         policy_dist = self.create_distribution(policy_logits)
         policy_action_log_probs = policy_dist.log_prob(actions)
-
-        # print(
-        #     "policy dist",
-        #     policy_dist.loc.min(),
-        #     policy_dist.loc.max(),
-        #     policy_dist.scale.min(),
-        #     policy_dist.scale.max(),
-        # )
-        # print("behaviour action", behaviour_action_log_probs.mean(), policy_action_log_probs.mean())
-        # print("vs_t", vs_t.min(), vs_t.max())
 
         rho_s = T.exp(policy_action_log_probs - behaviour_action_log_probs)
         surrogate_loss1 = rho_s * advantages
@@ -157,10 +130,6 @@ class PPOAgent(nn.Module):
 
         # Entropy loss
         entropy_loss = -policy_dist.entropy().mean()
-
-        # print(f"policy loss: {policy_loss}")
-        # print(f"value loss: {value_loss}")
-        # print(f"entropy loss: {entropy_loss}")
 
         return {
             "policy_loss": policy_loss,

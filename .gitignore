@@ -56,3 +56,4 @@ __marimo__/
 *.ipynb_checkpoints/*
 .idea
 mlruns
+outputs

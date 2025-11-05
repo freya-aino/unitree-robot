@@ -1,0 +1,8 @@
+input_size: 16
+value_output_size: 1
+network_hidden_size: 16
+num_hidden_layers: 1
+lambda_: 0.99
+epsilon: 0.3
+discounting: 0.99
+reward_scaling: 1.0

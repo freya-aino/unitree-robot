@@ -1,137 +1,105 @@
 import time
-from random import randint
-
 from tqdm import tqdm
 import torch as T
 import torch.nn as nn
-from torch import optim
 import mlflow
 from torch.utils.data import DataLoader
 from unitree_robot.common.datastructure import UnrollData, MultiUnrollDataset
-from unitree_robot.train.environments import MujocoEnv
-from unitree_robot.train.agents import PPOAgent
-from unitree_robot.train.experiments import Experiment
+from unitree_robot.training.environments import MujocoEnv
+from unitree_robot.training.experiments import Experiment
+from unitree_robot.common.agents import PPOAgent
 
 
 class Trainer:
     def __init__(
         self,
-        env: MujocoEnv,
+        environment: MujocoEnv,
         experiment: Experiment,
-        device: str,
-        network_hidden_size: int,
-        network_layers: int,
-        reward_scaling: float,
-        lambda_: float,
-        epsilon: float,
-        discounting: float,
-        learning_rate: float,
+        agent: PPOAgent,
+        # device: str,
         max_gradient_norm: float,
-        optimizer_fn=optim.AdamW,
+        optimizer,
     ) -> None:
-        # -- set device
-        if T.cuda.is_available() and "cuda" in device:
-            print("Trainer: device set to gpu (cuda) !")
-            self.device = device
-        else:
-            print("Trainer: device set to cpu !")
-            self.device = "cpu"
-
         # -- variables
-        self.env = env
-        self.observation_space_size = self.env.get_observation_size()
-        self.action_space_size = self.env.get_action_size()
+        # self.device = device
+        self.environment = environment
+        self.experiment = experiment
+        self.agent = agent
+
+        # -- set up and grad norm
+        self.optimizer = optimizer
         self.max_gradient_norm = max_gradient_norm
 
-        # -- create agent
-        self.agent = PPOAgent(
-            input_size=self.observation_space_size,
-            policy_output_size=self.action_space_size * 2,  # *2 for logits
-            value_output_size=1,
-            network_hidden_size=network_hidden_size,
-            network_layers=network_layers,
-            discounting=discounting,
-            lambda_=lambda_,
-            epsilon=epsilon,
-            reward_scaling=reward_scaling,
-            device=device,
-        ).to(device=device)
+    def unroll_step(self, observation: T.Tensor):
+        # assert ~last_observation.isnan().any(), "NaN observation detected"
+        # assert ~last_observation.isinf().any(), "Inf observation detected"
 
-        # -- set up optimizer
-        self.optim = optimizer_fn(self.agent.parameters(), lr=learning_rate)
+        # decide which action to take depending on the environment observation (robot state)
+        logits, action = self.agent.get_action(observation=observation)
 
-        # -- set experiment
-        self.experiment = experiment
+        # squeeze the batch dimension and the sequence dimension
+        action = action.cpu().squeeze().to(device="cpu")
+        logits = logits.cpu().squeeze().to(device="cpu")
 
-    # def eval_unroll(self, length):
-    #   """Return number of episodes and average reward for a single unroll."""
-    #   observation = self.env.reset()
-    #   episodes = T.zeros((), device=self.device)
-    #   episode_reward = T.zeros((), device=self.device)
-    #   for _ in range(length):
-    #     _, action = self.agent.get_logits_action(observation)
-    #     observation, reward, done, _ = self.env.step(action)
-    #     episodes += T.sum(done)
-    #     episode_reward += T.sum(reward)
-    #   return episodes, episode_reward / episodes
+        # take a step in the environment and get its return values like the local reward for taking that action.
+        new_observation, mj_data = self.environment.step(action=action)
+        rewards = self.experiment(mj_data=mj_data)
+        scaled_reward_mean = T.Tensor([*rewards.values()]).mean()
+
+        # assert ~scaled_reward_mean.isnan().any(), "NaN reward detected"
+        # assert ~scaled_reward_mean.isinf().any(), "Inf reward detected"
+        # assert ~action.isnan().any(), "NaN action detected"
+        # assert ~action.isinf().any(), "Inf action detected"
+        # assert ~logits.isnan().any(), "NaN logits detected"
+        # assert ~logits.isinf().any(), "Inf logits detected"
+
+        # for n in self.env.actuator_names:
+        #     value = self.env.data.actuator(n).velocity[0]
+        #     mlflow.log_metric(f"actuator velocity - {n}", value, step=j)
+
+        return {
+            "observation": new_observation,
+            "logits": logits,
+            "action": action,
+            "reward": scaled_reward_mean,
+            "raw_rewards": rewards,
+        }
 
     def unroll(self, unroll_length: int, seed: int):
         """Return step data over multple unrolls."""
 
-        unroll = UnrollData.initialize_empty(
+        unroll_data = UnrollData.initialize_empty(
             unroll_length=unroll_length,
             observation_size=self.observation_space_size,
             action_size=self.action_space_size,
         )
 
         # env warmup
-        self.env.reset(seed=seed)
-        action = T.Tensor(self.env.action_space.sample()).to(dtype=T.float32)
-        last_observation, mj_data = self.env.step(action=action)
-        last_observation = last_observation.to(dtype=T.float32, device=self.device)
+        _ = self.environment.reset(seed=seed)
+        action = T.Tensor(self.environment.action_space.sample()).to(dtype=T.float32)
+        last_observation, mj_data = self.environment.step(action=action)
+        last_observation = last_observation.to(dtype=T.float32)
 
         mean_rewards = {r: 0.0 for r in self.experiment(mj_data=mj_data)}
-
         for j in range(0, unroll_length):
-            assert ~last_observation.isnan().any(), "NaN observation detected"
-            assert ~last_observation.isinf().any(), "Inf observation detected"
+            step_out = self.unroll_step(
+                observation=last_observation.to(device=self.agent.device)
+            )
 
-            # decide which action to take depending on the environment observation (robot state)
-            logits, action = self.agent.get_action(observation=last_observation)
+            # log raw rewards
+            for r in step_out["raw_rewards"]:
+                mean_rewards[r] += step_out["raw_rewards"][r] / unroll_length
 
-            # squeeze the batch dimension and the sequence dimension
-            action = action.cpu().squeeze().to(device="cpu")
-            logits = logits.cpu().squeeze().to(device="cpu")
+            # track unroll data
+            unroll_data.observation[j, :] = last_observation[:]
+            unroll_data.logits[j, :] = step_out["logits"][:]
+            unroll_data.actions[j, :] = step_out["action"][:]
+            unroll_data.rewards[j, :] = step_out["reward"]
 
-            # take a step in the environment and get its return values like the local reward for taking that action.
-            observation, mj_data = self.env.step(action=action)
-            rewards = self.experiment(mj_data=mj_data)
-            scaled_reward_mean = T.Tensor([*rewards.values()]).mean()
+            # set last observation
+            last_observation = step_out["observation"]
 
-            # log rewards
-            for r in rewards:
-                mean_rewards[r] += rewards[r] / unroll_length
-
-            assert ~scaled_reward_mean.isnan().any(), "NaN reward detected"
-            assert ~scaled_reward_mean.isinf().any(), "Inf reward detected"
-            assert ~action.isnan().any(), "NaN action detected"
-            assert ~action.isinf().any(), "Inf action detected"
-            assert ~logits.isnan().any(), "NaN logits detected"
-            assert ~logits.isinf().any(), "Inf logits detected"
-
-            unroll.observation[j, :] = last_observation[:]
-            unroll.logits[j, :] = logits[:]
-            unroll.action[j, :] = action[:]
-            unroll.reward[j, :] = scaled_reward_mean
-            # unrolls.done[i,j] = done
-
-            for n in self.env.actuator_names:
-                value = self.env.data.actuator(n).velocity[0]
-                mlflow.log_metric(f"actuator velocity - {n}", value, step = j)
-
-            last_observation = observation.to(dtype=T.float32, device=self.device)
-
-        return unroll, mean_rewards
+        return unroll_data, mean_rewards
 
     def train(
         self,
@@ -143,7 +111,6 @@ class Trainer:
         entropy_loss_scale: float,
         value_loss_scale: float,
         policy_loss_scale: float,
-        seed: int,
     ):
         assert unroll_length % minibatch_size == 0, (
             "unroll_length must be divisible by minibatch_size"

@@ -1,7 +1,7 @@
 from abc import ABC
 from mujoco import MjData, MjModel
 
-from unitree_robot.train.rewards import (
+from unitree_robot.training.rewards import (
     BaseOrientationReward,
     EnergyReward,
     BodyHeightReward,
