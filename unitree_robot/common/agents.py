@@ -2,6 +2,7 @@ import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
+from torch.nn.parameter import Parameter
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 
 
@@ -18,8 +19,9 @@ class PPOAgent(nn.Module):
         discounting: float,
         lambda_: float,
         epsilon: float,
+        moving_average_window_size: int,
         reward_scaling: float,
-        device: str,
+        train_sequence_length: int,
     ):
         super().__init__()
 
@@ -31,11 +33,24 @@ class PPOAgent(nn.Module):
             hidden_size=network_hidden_size,
         )
 
+        self.moving_average_window_size = moving_average_window_size
         self.discounting = discounting
         self.reward_scaling = reward_scaling
-        self.lambda_ = lambda_
         self.epsilon = epsilon
-        self.device = device
+
+        # decay matrix
+        decay_factor = self.discounting * lambda_
+        self.decay_factor_matrix = Parameter(
+            T.triu(
+                decay_factor
+                ** T.clamp(
+                    T.arange(train_sequence_length - 1).unsqueeze(0)
+                    - T.arange(train_sequence_length - 1).unsqueeze(1),
+                    min=0,
+                )
+            ).unsqueeze(0),
+            requires_grad=False,
+        )
 
     def create_distribution(self, logits: T.Tensor):
         loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
@@ -49,10 +64,7 @@ class PPOAgent(nn.Module):
         # )
 
     def get_action(self, observation: T.Tensor):
-        # observation = self.normalize(observation
-        assert ~observation.isnan().any(), "Observation contains NaN values"
-        assert ~observation.isinf().any(), "Observation contains infinite values"
-
+        # observation = self.normalize(observation # TODO - this is still missing from the original code
         if self.eval:
             assert len(observation.shape) == 1, (
                 f"Expected 1D tensor when evaluating, got {observation.shape}"
@@ -60,11 +72,6 @@ class PPOAgent(nn.Module):
             observation = observation.unsqueeze(0).unsqueeze(0)
 
         logits = self.network.policy_forward(observation)
-
-        # print(logits)
-
-        assert ~logits.isnan().any(), "Logits contain NaN values"
-        assert ~logits.isinf().any(), "Logits contain infinite values"
 
         dist = self.create_distribution(logits)
         action = dist.sample()
@@ -76,14 +83,13 @@ class PPOAgent(nn.Module):
         logits: T.Tensor,
         actions: T.Tensor,
         rewards: T.Tensor,
-        moving_average_window_size: int = 16,
     ):
         # moving average rewards
         rewards = F.avg_pool1d(
             rewards.transpose(1, 2),
             stride=1,
-            kernel_size=moving_average_window_size,
-            padding=moving_average_window_size // 2,
+            kernel_size=self.moving_average_window_size,
+            padding=self.moving_average_window_size // 2,
         ).transpose(1, 2)[:, :-1, :]
 
         policy_logits = self.network.policy_forward(observations)
@@ -103,13 +109,8 @@ class PPOAgent(nn.Module):
             deltas = rewards + self.discounting * values_t_1 - values_t
 
             # calculate discounted deltas
-            powers = (
-                T.arange(deltas.shape[1]).unsqueeze(0)
-                - T.arange(deltas.shape[1]).unsqueeze(1)
-            ).to(device=self.device)
-            decay_factor = (self.lambda_ * self.discounting) ** T.clamp(powers, min=0)
-            discount_matrix = T.triu(decay_factor).unsqueeze(0)
-            discounted_deltas = T.matmul(discount_matrix, deltas)
+
+            discounted_deltas = T.matmul(self.decay_factor_matrix, deltas)
 
             vs_t = discounted_deltas + values_t
             vs_t_1 = T.cat([vs_t[:, 1:], bootstrap_value], 1)

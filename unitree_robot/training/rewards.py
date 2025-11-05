@@ -4,8 +4,6 @@ from typing import List
 from mujoco import MjData, MjModel
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
-from torch.nested import to_padded_tensor
-
 
 # explanation for mjData fields: https://bhaswanth-a.github.io/posts/mujoco-basics/
 

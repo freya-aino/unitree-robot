@@ -49,8 +49,8 @@ class MultiUnrollDataset(Dataset):
 
         self.observations = stack([u.observation for u in unrolls], dim=0)
         self.logits = stack([u.logits for u in unrolls], dim=0)
-        self.action = stack([u.action for u in unrolls], dim=0)
-        self.reward = stack([u.reward for u in unrolls], dim=0)
+        self.actions = stack([u.actions for u in unrolls], dim=0)
+        self.rewards = stack([u.rewards for u in unrolls], dim=0)
 
         self.preprocess(
             num_unrolls=len(unrolls),
@@ -65,8 +65,8 @@ class MultiUnrollDataset(Dataset):
         return {
             "observations": self.observations[idx],
             "logits": self.logits[idx],
-            "actions": self.action[idx],
-            "rewards": self.reward[idx],
+            "actions": self.actions[idx],
+            "rewards": self.rewards[idx],
         }
 
     def preprocess(self, num_unrolls: int, num_minibatches: int, minibatch_size: int):
@@ -74,11 +74,21 @@ class MultiUnrollDataset(Dataset):
             [num_unrolls, num_minibatches, minibatch_size, -1]
         )
         logits = self.logits.view([num_unrolls, num_minibatches, minibatch_size, -1])
-        actions = self.action.view([num_unrolls, num_minibatches, minibatch_size, -1])
-        rewards = self.reward.view([num_unrolls, num_minibatches, minibatch_size, -1])
+        actions = self.actions.view([num_unrolls, num_minibatches, minibatch_size, -1])
+        rewards = self.rewards.view([num_unrolls, num_minibatches, minibatch_size, -1])
 
         ll = num_unrolls * num_minibatches
         self.observations = observations.reshape([ll, minibatch_size, -1])
         self.logits = logits.reshape([ll, minibatch_size, -1])
-        self.action = actions.reshape([ll, minibatch_size, -1])
-        self.reward = rewards.reshape([ll, minibatch_size, -1])
+        self.actions = actions.reshape([ll, minibatch_size, -1])
+        self.rewards = rewards.reshape([ll, minibatch_size, -1])
+
+    def validate(self):
+        assert ~self.actions.isnan().any(), "Action contains NaN values"
+        assert ~self.actions.isinf().any(), "Action contains infinite values"
+        assert ~self.rewards.isnan().any(), "Reward contains NaN values"
+        assert ~self.rewards.isinf().any(), "Reward contains infinite values"
+        assert ~self.logits.isnan().any(), "Logits contains NaN values"
+        assert ~self.logits.isinf().any(), "Logits contains infinite values"
+        assert ~self.observations.isnan().any(), "Observations contain NaN values"
+        assert ~self.observations.isinf().any(), "Observations contain infinite values"

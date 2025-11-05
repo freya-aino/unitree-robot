@@ -9,6 +9,5 @@ optimizer:
 
 device: "cuda:0"
 max_gradient_norm: 2.0
-
 seed: 0
 experiment_name: "standing_up"

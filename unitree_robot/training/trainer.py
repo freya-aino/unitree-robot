@@ -16,15 +16,17 @@ class Trainer:
         environment: MujocoEnv,
         experiment: Experiment,
         agent: PPOAgent,
-        # device: str,
+        device: T.device,
         max_gradient_norm: float,
+        seed: int,
         optimizer,
     ) -> None:
         # -- variables
-        # self.device = device
         self.environment = environment
         self.experiment = experiment
-        self.agent = agent
+        self.agent = agent.to(device)
+        self.device = device
+        self.seed = seed
 
         # -- set up and grad norm
         self.optimizer = optimizer
@@ -70,8 +72,8 @@ class Trainer:
 
         unroll_data = UnrollData.initialize_empty(
             unroll_length=unroll_length,
-            observation_size=self.observation_space_size,
-            action_size=self.action_space_size,
+            observation_size=self.environment.observation_space_size,
+            action_size=self.environment.action_space_size,
         )
 
         # env warmup
@@ -83,7 +85,7 @@ class Trainer:
         mean_rewards = {r: 0.0 for r in self.experiment(mj_data=mj_data)}
         for j in range(0, unroll_length):
             step_out = self.unroll_step(
-                observation=last_observation.to(device=self.agent.device)
+                observation=last_observation.to(device=self.device)
             )
 
             # log raw rewards
@@ -132,7 +134,9 @@ class Trainer:
                 unrolls = []
                 mean_rewards = {}
                 for _ in range(num_unrolls):
-                    unroll, mr = self.unroll(unroll_length=unroll_length, seed=e)
+                    unroll, mr = self.unroll(
+                        unroll_length=unroll_length, seed=self.seed
+                    )
                     unrolls.append(unroll)
                     for k in mr:
                         if k in mean_rewards.keys():
@@ -160,35 +164,11 @@ class Trainer:
                 num_minibatches=num_minibatches,
                 minibatched=True,
             )
-
-            assert ~multi_unroll_dataset.action.isnan().any(), (
-                "Action contains NaN values"
-            )
-            assert ~multi_unroll_dataset.action.isinf().any(), (
-                "Action contains infinite values"
-            )
-            assert ~multi_unroll_dataset.reward.isnan().any(), (
-                "Reward contains NaN values"
-            )
-            assert ~multi_unroll_dataset.reward.isinf().any(), (
-                "Reward contains infinite values"
-            )
-            assert ~multi_unroll_dataset.logits.isnan().any(), (
-                "Logits contains NaN values"
-            )
-            assert ~multi_unroll_dataset.logits.isinf().any(), (
-                "Logits contains infinite values"
-            )
-            assert ~multi_unroll_dataset.observations.isnan().any(), (
-                "Observations contain NaN values"
-            )
-            assert ~multi_unroll_dataset.observations.isinf().any(), (
-                "Observations contain infinite values"
-            )
+            multi_unroll_dataset.validate()
 
             mlflow.log_metric(
                 "mean_reward",
-                multi_unroll_dataset.reward.mean().detach().cpu().item(),
+                multi_unroll_dataset.rewards.mean().detach().cpu().item(),
                 step=e,
             )
 
@@ -245,12 +225,12 @@ class Trainer:
 
                 # sum loss and backpropagate
                 loss = policy_loss + value_loss + entropy_loss
-                self.optim.zero_grad()
+                self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(
                     self.agent.parameters(), max_norm=self.max_gradient_norm
                 )
-                self.optim.step()
+                self.optimizer.step()
 
             for k in loss_averages:
                 mlflow.log_metric(k, loss_averages[k], step=e)

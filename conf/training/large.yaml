@@ -1,10 +1,10 @@
-epochs: 5000
+epochs: 1000
 
-unroll_length: 1024 # number of actions taken in the environment (inbetween these actions there are SIM_FRAMES_PER_STEP steps of simulation)
-num_unrolls: 16 # number of full unrolls to collect training samples
-minibatch_size: 256 # the sequence length that is trained on (UNROLL_LENGTH has to be divisible by this number)
-train_batch_size: 64 # the number of sequences that are used for a single training step (all batches are used in one epoch)
+unroll_length: 1024 * 8 # number of actions taken in the environment (inbetween these actions there are SIM_FRAMES_PER_STEP steps of simulation)
+num_unrolls: 32 # number of full unrolls to collect training samples
+minibatch_size: 1024 # the sequence length that is trained on (UNROLL_LENGTH has to be divisible by this number)
+train_batch_size: 32 * 8 # the number of sequences that are used for a single training step (all batches are used in one epoch)
 
-entropy_loss_scale: 0.002
-value_loss_scale: 0.1
-policy_loss_scale: 2.0
+entropy_loss_scale: 0.004
+value_loss_scale: 0.5
+policy_loss_scale: 1.0

@@ -1,18 +1,15 @@
-from copy import deepcopy, copy
-
 import random
-import numpy as np
-import mujoco
-import torch as T
-import numpy as np
-import gymnasium as gym
+from copy import copy, deepcopy
 from os import path
-from numpy import float32 as np_float32
-from typing import Any, Dict, Union, List
+from typing import Any, Dict, List, Union
+
+import gymnasium as gym
+import mujoco
+import numpy as np
+import torch as T
 from gymnasium import spaces
 from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from mujoco import MjData, MjModel
-
 
 # TODO
 # from gym.envs.registration import load_env_plugins
@@ -63,10 +60,12 @@ class MujocoEnv(gym.Env):
             )
 
         # -- set relevant control spaces, observation spaces and mujoco data
-        self.observation_space_size = self.get_observation_size()
-        ctrl_range = self.model.actuator_ctrlrange.copy().astype(np_float32)
+        ctrl_range = self.model.actuator_ctrlrange.copy().astype(np.float32)
         low, high = ctrl_range.T
-        self.action_space = spaces.Box(low=low, high=high, dtype=np_float32)
+        self.action_space = spaces.Box(low=low, high=high, dtype=np.float32)
+
+        self.observation_space_size = self.get_observation_size()
+        self.action_space_size = self.get_action_size()
 
         self.init_qpos = self.data.qpos.ravel().copy()
         self.init_qvel = self.data.qvel.ravel().copy()
@@ -99,7 +98,12 @@ class MujocoEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
 
         # apply initial noise
-        # self.data.qpos += np.random.normal(size=self.init_qpos.shape).astype(np_float32) * self.initial_noise_scale
+        self.data.qpos += np.random.normal(
+            scale=self.initial_noise_scale, size=self.init_qpos.shape
+        ).astype(np.float32)
+        self.data.qvel += np.random.normal(
+            scale=self.initial_noise_scale, size=self.init_qvel.shape
+        ).astype(np.float32)
 
         # self.set_stat(self.init_qpos, self.init_qvel)
         return self._get_observation()
@@ -120,7 +124,9 @@ class MujocoEnv(gym.Env):
         Step the simulation n number of frames and applying a control action.
         """
         # Check control input is contained in the action space
-        assert ctrl.shape == self.action_space.shape, "Action dimension mismatch"
+        assert ctrl.shape == self.action_space.shape, (
+            f"Action dimension mismatch, expected {self.action_space_size}, got {ctrl.shape}"
+        )
 
         ctrl = ctrl.detach().cpu().numpy() / self.sim_frames_per_step
 
