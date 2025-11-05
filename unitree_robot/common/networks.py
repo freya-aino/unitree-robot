@@ -8,18 +8,18 @@ class NetworkBlock(nn.Module):
     def __init__(self, input_size: int, output_size: int, act_f):
         super().__init__()
 
-        self.bn = nn.BatchNorm1d(input_size)
-        self.ln = nn.LayerNorm(input_size)
-
-        self.nn1 = nn.Linear(input_size, input_size)
-        self.nn2 = nn.Linear(input_size, input_size)
+        # self.bn = nn.BatchNorm1d(input_size)
+        # self.ln = nn.LayerNorm(input_size)
+        #
+        # self.nn1 = nn.Linear(input_size, input_size)
+        # self.nn2 = nn.Linear(input_size, input_size)
         self.nn3 = nn.Linear(input_size, output_size)
 
         self.act = act_f()
 
     def forward(self, x: T.Tensor) -> T.Tensor:
-        x = self.act(self.ln(self.nn1(x)))
-        x = self.act(self.bn(self.nn2(x).permute(0, 2, 1)).permute(0, 2, 1))
+        # x = self.act(self.ln(self.nn1(x)))
+        # x = self.act(self.bn(self.nn2(x).permute(0, 2, 1)).permute(0, 2, 1))
         return self.act(self.nn3(x))
 
 

@@ -2,6 +2,7 @@ from copy import deepcopy, copy
 
 import mujoco
 import torch as T
+import numpy as np
 import gymnasium as gym
 from os import path
 from numpy import float32 as np_float32
@@ -42,6 +43,7 @@ class MujocoEnv(gym.Env):
         width: int = 1920,
         height: int = 1080,
         render_fps: int = 60,
+        initial_noise_scale: float = 0.001,
     ):
         # -- metadata
         self.metadata["render_modes"] = ["human"]
@@ -80,6 +82,7 @@ class MujocoEnv(gym.Env):
         self.height = height
         self.sim_frames_per_step = sim_frames_per_step
         self.camera_name = camera_name
+        self.initial_noise_scale = initial_noise_scale
 
         super().__init__()
 
@@ -93,11 +96,17 @@ class MujocoEnv(gym.Env):
         raise NotImplementedError
 
     def reset(self, seed: int):
+
+        np.random.seed(seed)
+
         # assert self.observation_space, "observation space not set"
         mujoco.mj_resetData(self.model, self.data)
         # TODO: apply initial noise
+
+        self.data.qpos += np.random.normal(size=self.init_qpos.shape).astype(np_float32) * self.initial_noise_scale
+
         # self.set_stat(self.init_qpos, self.init_qvel)
-        return super().reset(seed=seed)
+        # return super().reset(seed=seed)
 
     def render(self):
         self.viewer.render("human")
@@ -140,9 +149,8 @@ class MujocoEnv(gym.Env):
 class Go2Env(MujocoEnv):
     """Superclass for MuJoCo environments."""
 
-    def __init__(
-        self, model_path: str, sim_frames_per_step: int, camera_name: str = "main"
-    ):
+    def __init__(self, **kwargs):
+
         self.actuator_names = [
             "FL_calf",
             "FL_hip",
@@ -155,7 +163,7 @@ class Go2Env(MujocoEnv):
             "RL_thigh",
             "RR_calf",
             "RR_hip",
-            "RR_thigh",
+            "RR_thigh"
         ]
 
         self.sensor_names = [
@@ -196,7 +204,7 @@ class Go2Env(MujocoEnv):
             "RR_thigh_torque",
             "RR_thigh_vel",
             "frame_pos",
-            "frame_vel",
+            "frame_vel"
             # 'imu_acc',
             # 'imu_gyro',
             # 'imu_quat'
@@ -204,11 +212,7 @@ class Go2Env(MujocoEnv):
 
         # self._set_observation_space()
 
-        super().__init__(
-            model_path=model_path,
-            sim_frames_per_step=sim_frames_per_step,
-            camera_name=camera_name,
-        )
+        super().__init__(**kwargs)
 
         # TODO:
         # def _set_observation_space(self):
