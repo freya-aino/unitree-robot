@@ -1,4 +1,4 @@
-epochs: 100
+epochs: 1000
 
 unroll_length: 256 # number of actions taken in the environment (inbetween these actions there are SIM_FRAMES_PER_STEP steps of simulation)
 num_unrolls: 4 # number of full unrolls to collect training samples
@@ -8,3 +8,6 @@ train_batch_size: 16 # the number of sequences that are used for a single traini
 entropy_loss_scale: 0.002
 value_loss_scale: 0.1
 policy_loss_scale: 2.0
+
+seed: 0
+max_gradient_norm: 1.0

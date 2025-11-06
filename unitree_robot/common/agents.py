@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.nn.parameter import Parameter
+
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 
 
@@ -63,19 +64,13 @@ class PPOAgent(nn.Module):
         #     scale=0.001 # TODO for simulating a real world discrete control signal
         # )
 
-    def get_action(self, observation: T.Tensor):
+    def get_action_and_logits(self, observation: T.Tensor):
         # observation = self.normalize(observation # TODO - this is still missing from the original code
-        if self.eval:
-            assert len(observation.shape) == 1, (
-                f"Expected 1D tensor when evaluating, got {observation.shape}"
-            )
-            observation = observation.unsqueeze(0).unsqueeze(0)
-
         logits = self.network.policy_forward(observation)
 
         dist = self.create_distribution(logits)
         action = dist.sample()
-        return logits, action
+        return action, logits
 
     def forward(
         self,
@@ -84,6 +79,10 @@ class PPOAgent(nn.Module):
         actions: T.Tensor,
         rewards: T.Tensor,
     ):
+        # normalize rewards
+        std, mu = T.std_mean(rewards, dim=1, keepdim=True)
+        rewards = (rewards - mu) / std
+
         # moving average rewards
         rewards = F.avg_pool1d(
             rewards.transpose(1, 2),
@@ -106,10 +105,10 @@ class PPOAgent(nn.Module):
 
         # compute GAE
         with T.no_grad():
+            # calculate deltas for each timestep simultainously
             deltas = rewards + self.discounting * values_t_1 - values_t
 
             # calculate discounted deltas
-
             discounted_deltas = T.matmul(self.decay_factor_matrix, deltas)
 
             vs_t = discounted_deltas + values_t
