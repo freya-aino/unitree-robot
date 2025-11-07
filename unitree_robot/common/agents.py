@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.nn.parameter import Parameter
 
+from unitree_robot.common.datastructure import UnrollData
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 
 
@@ -12,9 +13,8 @@ class PPOAgent(nn.Module):
 
     def __init__(
         self,
-        input_size: int,
-        policy_output_size: int,
-        value_output_size: int,
+        observation_size: int,
+        action_size: int,
         network_hidden_size: int,
         num_hidden_layers: int,
         discounting: float,
@@ -23,14 +23,18 @@ class PPOAgent(nn.Module):
         moving_average_window_size: int,
         reward_scaling: float,
         train_sequence_length: int,
+        policy_loss_scale: float,
+        value_loss_scale: float,
+        entropy_loss_scale: float,
+        softplus_sharpness_factor: float,
     ):
         super().__init__()
 
         self.network = BasicPolicyValueNetwork(
-            input_size=input_size,
+            input_size=observation_size,
+            policy_output_size=action_size * 2,
+            value_output_size=1,
             num_hidden_layers=num_hidden_layers,
-            policy_output_size=policy_output_size,
-            value_output_size=value_output_size,
             hidden_size=network_hidden_size,
         )
 
@@ -38,6 +42,11 @@ class PPOAgent(nn.Module):
         self.discounting = discounting
         self.reward_scaling = reward_scaling
         self.epsilon = epsilon
+        self.softplus_sharpness_factor = softplus_sharpness_factor
+
+        self.policy_loss_scale = policy_loss_scale
+        self.value_loss_scale = value_loss_scale
+        self.entropy_loss_scale = entropy_loss_scale
 
         # decay matrix
         decay_factor = self.discounting * lambda_
@@ -57,7 +66,7 @@ class PPOAgent(nn.Module):
         loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
         return Normal(
             loc=loc,
-            scale=F.softplus(scale) + 0.001,
+            scale=F.softplus(scale, beta=self.softplus_sharpness_factor) + 0.001,
         )
         # return Normal(
         #     loc=loc,
@@ -72,13 +81,12 @@ class PPOAgent(nn.Module):
         action = dist.sample()
         return action, logits
 
-    def forward(
-        self,
-        observations: T.Tensor,
-        logits: T.Tensor,
-        actions: T.Tensor,
-        rewards: T.Tensor,
-    ):
+    def train_step(self, unroll_data: UnrollData):
+        observations = unroll_data.observations
+        logits = unroll_data.logits
+        actions = unroll_data.actions
+        rewards = unroll_data.rewards
+
         # normalize rewards
         std, mu = T.std_mean(rewards, dim=1, keepdim=True)
         rewards = (rewards - mu) / std
@@ -131,8 +139,12 @@ class PPOAgent(nn.Module):
         # Entropy loss
         entropy_loss = -policy_dist.entropy().mean()
 
-        return {
+        return (
+            policy_loss * self.policy_loss_scale
+            + value_loss * self.value_loss_scale
+            + entropy_loss * self.entropy_loss_scale,
+        {
             "policy_loss": policy_loss,
             "value_loss": value_loss,
             "entropy_loss": entropy_loss,
-        }
+        })

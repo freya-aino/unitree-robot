@@ -1,7 +1,0 @@
-model_path: "./external/unitree_mj_models/go2/scene.xml"
-sim_frames_per_step: 5
-initial_noise_scale: 0.01
-#camera_name: "main"
-mujoco_timestep: 0.0005 # 0.0005 - 0.005
-num_parallel_environments: 4
-

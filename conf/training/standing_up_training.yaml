@@ -1,0 +1,14 @@
+defaults:
+  - default
+  - _self_
+
+unroll_length: 250
+#minibatch_size: 500
+
+entropy_loss_scale: 0.002
+value_loss_scale: 0.1
+policy_loss_scale: 2.0
+
+seed: 0
+max_gradient_norm: 1.0
+

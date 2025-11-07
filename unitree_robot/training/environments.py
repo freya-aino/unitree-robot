@@ -2,8 +2,7 @@ import random
 from copy import copy, deepcopy
 from os import path
 from types import NoneType
-from typing import Any, Dict, List, Union
-from torch2jax import t2j
+from typing import Tuple
 # import gymnasium as gym
 import jax
 import mujoco
@@ -14,183 +13,87 @@ import jax.dlpack as jax_dlpack
 # from gymnasium import spaces
 # from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from mujoco import MjData, MjModel, mjx
-
-# TODO
-# from gym.envs.registration import load_env_plugins
-# from gym.envs.registration import make, register, registry, spec
-# load_env_plugins()
-# register(
-#     "unitree-go2-standing",
-#     entry_point="unitree_robot.training.environments:Go2Env"
-# )
+from mujoco.mjx import Data as MjxData
 
 
-class MujocoMjxEnv:  # (gym.Env):
+class MujocoMjxEnv:
     """Superclass for all MuJoCo MJX environments."""
 
     def __init__(
         self,
         model_path: str,
         sim_frames_per_step: int,
-        mujoco_timestep: float,
+        # mujoco_timestep: float,
         initial_noise_scale: float,
         num_parallel_environments: int,
-        # width: int = 1920,
-        # height: int = 1080,
-        # enable_renderer: bool = False,
-        # render_fps: int = 60,
+        observation_size: int,
+        action_size: int,
     ):
-        # -- load mujoco model
-        assert path.exists(model_path), f"File {model_path} does not exist"
-        self.mj_model = MjModel.from_xml_path(model_path)
-        self.mj_data = MjData(self.mj_model)
-
-        self.mj_model.opt.timestep = mujoco_timestep
-
-        self.mjx_model = mjx.put_model(self.mj_model)
-        self.mjx_data_initial = mjx.put_data(self.mj_model, self.mj_data)
-        self.mjx_data = mjx.put_data(self.mj_model, self.mj_data)
-
-        self.jit_step = jax.jit(mjx.step)
-
         # -- set variables
         self.sim_frames_per_step = sim_frames_per_step
         self.initial_noise_scale = initial_noise_scale
         self.num_parallel_environments = num_parallel_environments
-        self.observation_space_size = self.mj_data.qpos.shape[0] + self.mj_data.qvel.shape[0]
-        self.action_space_size = self.mj_data.actuator_length.shape[0] # TODO: thi is actuator_length to get action size but may be something more reliable
+        self.observation_size = observation_size
+        self.action_size = action_size
+
+        # -- load mujoco model and create data
+        assert path.exists(model_path), f"File {model_path} does not exist"
+        self.mj_model = MjModel.from_xml_path(model_path)
+        self.mj_data = MjData(self.mj_model)
+
+        # -- set mujoco model parameter
+        # self.mj_model.opt.timestep = mujoco_timestep # INFO - currently there is no reason to switch this on, so default is just "safer"
+
+        # --- instantiate mjx model and data
+        self.mjx_model = mjx.put_model(self.mj_model)
+        self.mjx_data_initial = mjx.put_data(self.mj_model, self.mj_data)
+
+        # -- jit the step function for distribution
+        self.jit_step = jax.jit(mjx.step)
 
         # -- set relevant control spaces, observation spaces and mujoco data
-        self.action_range = self.mj_model.actuator_ctrlrange.copy().astype(np.float32).T
+        self.action_ranges = self.mjx_model.actuator_ctrlrange.copy().astype(np.float32)
 
-        # self.observation_space_size = self.get_observation_size()
-        # self.action_space_size = self.get_action_size()
+    @staticmethod
+    def _get_observations(mjx_data: MjxData) -> T.Tensor:
+        obs = jax.numpy.concatenate([mjx_data.qpos.copy(), mjx_data.qvel.copy()], axis=-1, dtype=jax.numpy.float32)
+        return torch_dlpack.from_dlpack(obs)
 
-        # self.init_qpos = self.mj_data.qpos.ravel().copy()
-        # self.init_qvel = self.mj_data.qvel.ravel().copy()
-
-
-    def _get_observations(self) -> T.Tensor:
-        obs = jax.numpy.concatenate([self.mjx_data.qpos.copy(), self.mjx_data.qvel.copy()], axis=-1, dtype=jax.numpy.float32)
-        return torch_dlpack.from_dlpack(obs).unsqueeze(1)
-
-    # def get_observation_size(self) -> int:
-    #     return self._get_observation().shape[0]
-    #
-    # def get_action_size(self) -> int:
-    #     return T.Tensor(self.action_space.sample()).shape[0]
-    #
-    # def _get_observation(self) -> T.Tensor:
-    #     raise NotImplementedError
-
-    def step(self, action: T.Tensor) -> T.Tensor:
-
-        action = jax_dlpack.from_dlpack(action.detach()).squeeze() / self.sim_frames_per_step
-
-        # action_batch = t2j(action_batch)
-        self.mjx_data = self.mjx_data.replace(ctrl=action)
+    def step(self, action: T.Tensor, mjx_data: MjxData) -> Tuple[T.Tensor, MjxData]:
+        mjx_data = self.set_ctrl_(mjx_data, action)
 
         for i in range(self.sim_frames_per_step):
-            self.mjx_data = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, self.mjx_data)
+            mjx_data = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, mjx_data)
 
-        return self._get_observations()
+        return self._get_observations(mjx_data), mjx_data
 
     def reset(self, seed: int):
 
         rng = jax.random.PRNGKey(seed)
         rng = jax.random.split(rng, self.num_parallel_environments)
-        self.mjx_data = jax.vmap(lambda r: self.mjx_data.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
+        mjx_data = jax.vmap(lambda r: self.mjx_data_initial.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data_initial.qpos.shape) * self.initial_noise_scale))(rng)
 
-        return self._get_observations()
+        return self._get_observations(mjx_data), mjx_data
 
-    # def render(self):
-    #     assert self.renderer_enabled, (
-    #         "trying to call render without renderer, pass 'enable_renderer=True' to the environment"
-    #     )
-    #     self.viewer.render("human")
+    def set_ctrl_(self, mjx_data: MjxData, action: T.Tensor) -> MjxData:
+        # scale the input_magnitude by the number of sim steps per action step
+        action = jax_dlpack.from_dlpack(action.detach()) / self.sim_frames_per_step
 
-    # def step(self, action: T.Tensor) -> T.Tensor:
-    #     self._do_simulation(ctrl=action)
-    #     obs = self._get_observation()
-    #     return obs
+        # scale the input by the available ctrl range
+        mean = self.action_ranges.mean(axis=-1)
+        scale = (self.action_ranges.max(axis=-1) - self.action_ranges.min(axis=-1)) / 2
+        action = mean + action * scale
 
-    # def _do_simulation(self, ctrl: T.Tensor):
-    #     """
-    #     Step the simulation n number of frames and applying a control action.
-    #     """
-    #     # Check control input is contained in the action space
-    #     assert ctrl.shape == self.action_space.shape, (
-    #         f"Action dimension mismatch, expected {self.action_space_size}, got {ctrl.shape}"
-    #     )
+        # replace in mjx_data
+        return mjx_data.replace(ctrl=action)
 
-    #     # ctrl = ctrl.detach().cpu().numpy() / self.sim_frames_per_step
-
-    #     # -- step mujoco simulation
-    #     # self.data.ctrl[:] = ctrl
-    #     # mujoco.mj_step(self.model, self.data, nstep=self.sim_frames_per_step)
-    #     self.mjx_data = self.jit_step(self.mjx_model, self.mjx_data)
-    #     # mujoco.mj_forward(self.model, self.data)
-
-    #     # As of MuJoCo 2.0, force-related quantities like cacc are not computed
-    #     # unless there's a force sensor in the model.
-    #     # See https://github.com/openai/gym/issues/1541
-    #     # mujoco.mj_rnePostConstraint(self.model, self.data)
-
-
-class Go2EnvMJX(MujocoMjxEnv):
-    def __init__(self, **kwargs):
-        self.actuator_names = [
-            "FL_calf", "FL_hip", "FL_thigh",
-            "FR_calf", "FR_hip", "FR_thigh",
-            "RL_calf", "RL_hip", "RL_thigh",
-            "RR_calf", "RR_hip", "RR_thigh",
-        ]
-
-        # self.sensor_names = [
-        #     "FL_calf_pos",
-        #     "FL_calf_torque",
-        #     "FL_calf_vel",
-        #     "FL_hip_pos",
-        #     "FL_hip_torque",
-        #     "FL_hip_vel",
-        #     "FL_thigh_pos",
-        #     "FL_thigh_torque",
-        #     "FL_thigh_vel",
-        #     "FR_calf_pos",
-        #     "FR_calf_torque",
-        #     "FR_calf_vel",
-        #     "FR_hip_pos",
-        #     "FR_hip_torque",
-        #     "FR_hip_vel",
-        #     "FR_thigh_pos",
-        #     "FR_thigh_torque",
-        #     "FR_thigh_vel",
-        #     "RL_calf_pos",
-        #     "RL_calf_torque",
-        #     "RL_calf_vel",
-        #     "RL_hip_pos",
-        #     "RL_hip_torque",
-        #     "RL_hip_vel",
-        #     "RL_thigh_pos",
-        #     "RL_thigh_torque",
-        #     "RL_thigh_vel",
-        #     "RR_calf_pos",
-        #     "RR_calf_torque",
-        #     "RR_calf_vel",
-        #     "RR_hip_pos",
-        #     "RR_hip_torque",
-        #     "RR_hip_vel",
-        #     "RR_thigh_pos",
-        #     "RR_thigh_torque",
-        #     "RR_thigh_vel",
-        #     "frame_pos",
-        #     "frame_vel",
-        #     # 'imu_acc',
-        #     # 'imu_gyro',
-        #     # 'imu_quat'
-        # ]
-
-        super().__init__(**kwargs)
+#
+# class Go2EnvMJX(MujocoMjxEnv):
+#     def __init__(self, **kwargs):
+#         # self.actuator_names = [ "FL_calf", "FL_hip", "FL_thigh", "FR_calf", "FR_hip", "FR_thigh", "RL_calf", "RL_hip", "RL_thigh", "RR_calf", "RR_hip", "RR_thigh" ]
+#         # self.sensor_names = [ "FL_calf_pos", "FL_calf_torque", "FL_calf_vel", "FL_hip_pos", "FL_hip_torque", "FL_hip_vel", "FL_thigh_pos", "FL_thigh_torque", "FL_thigh_vel", "FR_calf_pos", "FR_calf_torque", "FR_calf_vel", "FR_hip_pos", "FR_hip_torque", "FR_hip_vel", "FR_thigh_pos", "FR_thigh_torque", "FR_thigh_vel", "RL_calf_pos", "RL_calf_torque", "RL_calf_vel", "RL_hip_pos", "RL_hip_torque", "RL_hip_vel", "RL_thigh_pos", "RL_thigh_torque", "RL_thigh_vel", "RR_calf_pos", "RR_calf_torque", "RR_calf_vel", "RR_hip_pos", "RR_hip_torque", "RR_hip_vel", "RR_thigh_pos", "RR_thigh_torque", "RR_thigh_vel", "frame_pos", "frame_vel", 'imu_acc', 'imu_gyro', 'imu_quat' ]
+#
+#         super().__init__(**kwargs)
 
 
 

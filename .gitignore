@@ -53,7 +53,8 @@ CATKIN_IGNORE
 # python
 dist/
 __marimo__/
-*.ipynb_checkpoints/*
 .idea
 mlruns
 outputs
+.ipynb_checkpoints
+.venv

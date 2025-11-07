@@ -5,19 +5,45 @@ import jax
 import mlflow
 import torch as T
 import tqdm
-from flatten_dict import flatten
+# from flatten_dict import flatten
 from omegaconf import DictConfig, OmegaConf
 from torch import optim
 from os import environ
+from sys import platform
+from mujoco.mjx import Data as MjxData
 
 from unitree_robot.common.agents import PPOAgent
-from unitree_robot.training.environments import Go2EnvMJX
+from unitree_robot.training.environments import MujocoMjxEnv
 from unitree_robot.common.datastructure import UnrollData
+from unitree_robot.training.experiments import Experiment, TestExperiment
+
+# -----------------------------------------------
 
 # set xla flags for some GPUs
 xla_flags = environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 environ["XLA_FLAGS"] = xla_flags
+
+# -----------------------------------------------
+
+def unroll_step(
+    agent: PPOAgent,
+    environment: MujocoMjxEnv,
+    mjx_data: MjxData,
+    observation: T.Tensor,
+    experiment: Experiment,
+    device: str
+):
+    with T.no_grad():
+        action, logits = agent.get_action_and_logits(observation)
+
+    next_observation, mjx_data = environment.step(action=action.squeeze(), mjx_data=mjx_data)
+    next_observation = next_observation.unsqueeze(1)
+
+    reward = experiment(mjx_data).unsqueeze(1).unsqueeze(1).to(device=device)
+
+    return next_observation, reward, action, logits
+
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -31,84 +57,88 @@ def main(cfg: DictConfig):
             Convert per‑step quantities to rates (e.g., power = work / dt).
 
     """
+    print("----------- CONFIGURATIONS -----------")
+    OmegaConf.resolve(cfg)
+    print(OmegaConf.to_yaml(cfg))
+    print("----------- CONFIGURATIONS -----------")
 
-    cfg = OmegaConf.to_object(cfg)
-    print(cfg)
+    warnings.warn("Disabled GPU for win32 systems for both pytoch and jax because of jax not having cuda avialable on windows")
+    warnings.warn("only 1 device is used at a time, so 1 cpu or 1 gpu, change if need more")
 
     # -- set variables
 
-    MINIBATCH_SIZE = cfg["training"]["minibatch_size"]
-    TORCH_DEVICE = T.device(cfg["device"])
-    RANDOM_SEED = cfg["random_seed"]
+    minibatch_size = cfg["training"]["minibatch_size"]
+    device = cfg["device"] if platform != "win32" else "cpu"
+    random_seed = cfg["random_seed"]
 
     # -- jax config
-
-    jax.config.update("jax_platforms", "cuda" if TORCH_DEVICE == T.device("cuda") else "cpu")
+    jax.config.update("jax_platforms", device)
+    jax.config.update("jax_default_device", jax.devices(device)[0])
     # jax.config.update("jax_distributed_debug", True)
     # jax.config.update("jax_log_compiles", False)
     jax.config.update("jax_logging_level", "ERROR")
 
-    # -- setup environment
+    print(f"jax devices: {jax.devices()}")
+    print(f"jax backend: {jax.default_backend()}")
 
-    environment = Go2EnvMJX(
-        **cfg["environment"],
-    )
+    # -- setup environment and agent
 
-    # mjx_data_batch = environment.reset(seed=0)
-    # dt = time.time()
-    # for i in tqdm.tqdm(range(1000)):
-    #     action = T.randn(size=[environment.num_parallel_environments, 12]).to(device="cuda")
-    #     # action = jax.random.uniform(key=jax.random.PRNGKey(0), shape=(environment.num_parallel_environments, 12))
-    #     environment.step(mjx_data_batch, action_batch=action)
-    # print(f"time: {(time.time() - dt) / 1000}")
+    environment = MujocoMjxEnv(**cfg.environment)
+    agent = PPOAgent(**cfg.agent).to(device=device)
+    optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
+    experiment = TestExperiment()
 
-    # batched_mj_data = mjx.get_data(environment.mj_model, batch)
-    # environment = Go2Env(**cfg["environment"])
-    # experiment = StandUpExperiment(mj_model=environment.model, **cfg["experiment"])
+    # -- printin some information about the environment
 
-    agent = PPOAgent(
-        input_size=environment.observation_space_size,
-        policy_output_size=environment.action_space_size * 2,
-        train_sequence_length=MINIBATCH_SIZE,
-        **cfg["agent"],
-    ).to(device=TORCH_DEVICE)
+    print(f"[INFO]: simulation fps: mjx = {1 / environment.mjx_model.opt.timestep}; mj = {1 / environment.mj_model.opt.timestep}")
+    print(f"[INFO]: ctrl range: {environment.mjx_model.actuator_ctrlrange.copy()}")
 
+    # -- unroll and training
 
-    # -- unroll
-
-    unroll_data = UnrollData.initialize_empty(
-        num_unrolls=environment.num_parallel_environments,
-        unroll_length=cfg["training"]["unroll_length"],
-        observation_size=environment.observation_space_size,
-        action_size=environment.action_space_size,
-    )
+    unroll_data = UnrollData(
+        num_unrolls=cfg.environment.num_parallel_environments,
+        unroll_length=cfg.training.unroll_length,
+        observation_size=cfg.environment.observation_size,
+        action_size=cfg.environment.action_size,
+    ).to(device=device)
 
 
-    observation = environment.reset(seed=RANDOM_SEED)
-    for i in tqdm.tqdm(range(cfg["training"]["unroll_length"]), desc="Unrolling"):
-        with T.no_grad():
-            action, logits = agent.get_action_and_logits(observation)
-        observation = environment.step(action=action)
+    # reset environment and jit warmup
+    observation, mjx_data = environment.reset(seed=random_seed)
+    observation = observation.unsqueeze(1)
+    observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
-    # print(agent(
-    #     observations,
-    #     actions,
-    #     logits,
-    #     rewards,
-    # ))
+    # training loop
+    for e in range(cfg.training.train_epochs):
+        mean_reward = 0.0
+        for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
+            new_observation, reward, action, logits = unroll_step(
+                agent=agent,
+                environment=environment,
+                mjx_data=mjx_data,
+                observation=observation,
+                experiment=experiment,
+                device=device
+            )
+            unroll_data.update(
+                unroll_step=i,
+                observation=observation,
+                action=action,
+                logits=logits,
+                reward=reward,
+            )
+            observation = new_observation
 
-    # optimizer = optim.AdamW(agent.parameters(), **cfg["optimizer"])
+            mean_reward += reward.detach().cpu().item() / cfg.training.unroll_length
 
-    # trainer = MultiEnvTrainer(
-    #     environment=environment,
-    #     agent=agent,
-    #     experiment=experiment,
-    #     copies=cfg["parallel_environments"],
-    #     device=cfg["device"],
-    #     optimizer=optimizer,
-    # )
+        loss, raw_losses = agent.train_step(unroll_data=unroll_data)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-    # trainer.train(**cfg["training"])
+        print(f"loss:   {loss}")
+        print(f"reward: {mean_reward}")
+
 
     # # create and select experiment
     # if not mlflow.get_experiment_by_name(cfg["experiment_name"]):

@@ -1,0 +1,6 @@
+.venv
+.ipynb_checkpoints
+.idea
+external/files
+mlruns
+outputs

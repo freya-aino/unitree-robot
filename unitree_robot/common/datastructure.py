@@ -1,40 +1,45 @@
-from enum import Enum
-from pydantic import BaseModel, ConfigDict
-from torch import Tensor, zeros, stack, randperm
+from torch import nn, Tensor, zeros, stack, randperm
 from typing import Sequence
-
+from dataclasses import dataclass
 from torch.utils.data import Dataset
-
 import numpy as np
 
+class UnrollData(nn.Module):
 
-class NETWORK_INTERFACE(Enum):
-    LOCAL = "lo"
-    LAPTOP_1 = "enp0s13f0u1"
-
-
-class UnrollData(BaseModel):
-    observation: Tensor
-    logits: Tensor
-    actions: Tensor
-    rewards: Tensor
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    @classmethod
-    def initialize_empty(
-        cls,
+    def __init__(
+        self,
         num_unrolls: int,
         unroll_length: int,
         observation_size: int,
         action_size: int,
     ):
-        return UnrollData(
-            observation=zeros(size=[num_unrolls, unroll_length, observation_size], device="cpu"),
-            logits=zeros(size=[num_unrolls, unroll_length, action_size * 2], device="cpu"),
-            actions=zeros(size=[num_unrolls, unroll_length, action_size], device="cpu"),
-            rewards=zeros(size=[num_unrolls, unroll_length, 1], device="cpu"),
-        )
+        super().__init__()
+
+        self.observations = zeros(size=[num_unrolls, unroll_length, observation_size])
+        self.logits = zeros(size=[num_unrolls, unroll_length, action_size * 2])
+        self.actions = zeros(size=[num_unrolls, unroll_length, action_size])
+        self.rewards = zeros(size=[num_unrolls, unroll_length, 1])
+
+    def update(
+        self,
+        unroll_step: int,
+        observation: Tensor,
+        logits: Tensor,
+        action: Tensor,
+        reward: Tensor,
+    ):
+        self.observations[:, unroll_step:unroll_step+1, :] = observation
+        self.logits[:, unroll_step:unroll_step+1, :] = logits
+        self.actions[:, unroll_step:unroll_step+1, :] = action
+        self.rewards[:, unroll_step:unroll_step+1, :] = reward
+
+    def validate(self):
+        is_observation_good = ~(self.observations.isnan().any() | self.observations.isinf().any())
+        is_logits_good = ~(self.logits.isnan().any() | self.logits.isinf().any())
+        is_actions_good = ~(self.actions.isnan().any() | self.actions.isinf().any())
+        is_rewards_good = ~(self.rewards.isnan().any() | self.rewards.isinf().any())
+
+    # TODO - do a type of validation that check for abnormal values during training (e.g. actions outside of bounds or logits very small or very big)
 
 
 # class MultiUnrollDataset(Dataset):

@@ -35,13 +35,14 @@ class BasicPolicyValueNetwork(nn.Module):
     ):
         super().__init__()
 
+
         self.policy_network = nn.Sequential(
             NetworkBlock(input_size, hidden_size, nn.ReLU6),
             *[
                 NetworkBlock(hidden_size, hidden_size, nn.ReLU6)
                 for _ in range(num_hidden_layers)
             ],
-            NetworkBlock(hidden_size, policy_output_size, nn.Identity),
+            NetworkBlock(hidden_size, policy_output_size, nn.Tanh),
         )
 
         self.value_network = nn.Sequential(

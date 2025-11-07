@@ -1,15 +1,15 @@
 defaults:
   - _self_
-  - environment: go2-flat_tarrain
+  - environment: go2-flat_terrain
   - experiment: standing_up-v1
   - agent: ppo-v1
-  - training: multi_unroll_test
+  - training: standing_up_training
 
 optimizer:
   lr: 6e-4
 
-# parallel_environments: 1
+train_epochs: 5
+num_parallel_environments: 4
 device: "cuda"
-max_gradient_norm: 2.0
 random_seed: 0
 experiment_name: "standing_up"
