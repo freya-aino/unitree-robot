@@ -81,10 +81,16 @@ def main(cfg: DictConfig):
     print(f"jax devices: {jax.devices()}")
     print(f"jax backend: {jax.default_backend()}")
 
-    # -- setup environment and agent
+    # -- setup environment, agent, experiment and unroll data
 
-    environment = MujocoMjxEnv(**cfg.environment)
+    unroll_data = UnrollData(
+        num_unrolls=cfg.environment.num_parallel_environments,
+        unroll_length=cfg.training.unroll_length,
+        observation_size=cfg.environment.observation_size,
+        action_size=cfg.environment.action_size,
+    ).to(device=device)
     agent = PPOAgent(**cfg.agent).to(device=device)
+    environment = MujocoMjxEnv(**cfg.environment)
     optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
     experiment = TestExperiment()
 
@@ -95,12 +101,6 @@ def main(cfg: DictConfig):
 
     # -- unroll and training
 
-    unroll_data = UnrollData(
-        num_unrolls=cfg.environment.num_parallel_environments,
-        unroll_length=cfg.training.unroll_length,
-        observation_size=cfg.environment.observation_size,
-        action_size=cfg.environment.action_size,
-    ).to(device=device)
 
 
     # reset environment and jit warmup

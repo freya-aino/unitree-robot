@@ -1,6 +1,6 @@
 from abc import ABC
 from mujoco.mjx import Data
-from torch import Tensor
+from torch import Tensor, float32, from_numpy
 
 from unitree_robot.training.rewards import (
     BaseOrientationReward,
@@ -21,7 +21,9 @@ class TestExperiment(Experiment):
     def __init__(self):
         super().__init__()
     def __call__(self, mjx_data: Data) -> Tensor:
-        return Tensor(mjx_data.qacc.mean(axis=-1).copy())
+        qacc_array = mjx_data.qacc.__array__().copy()
+        torch_array = from_numpy(qacc_array).to(dtype=float32).abs().mean(-1)
+        return torch_array.mean().unsqueeze(0)
 
 # class StandUpExperiment(Experiment):
 #     def __init__(
