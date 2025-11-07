@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "torch>=2.9.0",
     "jax[cpu] ; sys_platform == 'win32'",
-    "jax[cuda] ; sys_platform == 'linux'",
+    "jax[cuda13] ; sys_platform == 'linux'",
     "mlflow>=3.5.1",
     "warp-lang>=1.10.0",
     "mujoco-mjx>=3.3.7",
