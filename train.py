@@ -26,6 +26,36 @@ environ["XLA_FLAGS"] = xla_flags
 
 # -----------------------------------------------
 
+def render(render_fps: int):
+
+    # # print(env.action_space)
+    # env.reset()
+    # try:
+    #     for i in range(1000):
+    #         # print(env.get_state_vector())
+    #         t_start = time.perf_counter()
+
+    #         action = np.random.uniform(-1, 1, size=env.action_space.shape).astype(
+    #             np.float32
+    #         )
+    #         env.do_simulation(ctrl=action, n_frames=5)
+
+    #         env.render()
+
+    #         elapsed = time.perf_counter() - t_start
+    #         target = 1.0 / render_fps
+    #         if elapsed < target:
+    #             time.sleep(target - elapsed)
+
+    #         print(f"effective fps: {1.0 / (time.perf_counter() - t_start)}")
+
+    # except Exception as e:
+    #     raise e
+    # finally:
+    #     env.close()
+
+    raise NotImplementedError
+
 def unroll_step(
     agent: PPOAgent,
     environment: MujocoMjxEnv,
@@ -48,30 +78,28 @@ def unroll_step(
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
-    """
-    TODO:
 
-        please check out how 'model.opt.timestep' should be set in mujoco
-            model.opt.timestep
-            Simulation step size (dt)
-            Convert per‑step quantities to rates (e.g., power = work / dt).
-
-    """
+    # ----------------------------------------------------------------------------------------------------------------
     print("----------- CONFIGURATIONS -----------")
+
     OmegaConf.resolve(cfg)
     print(OmegaConf.to_yaml(cfg))
-    print("----------- CONFIGURATIONS -----------")
+
+    # ----------------------------------------------------------------------------------------------------------------
+    print("----------- SETTING VARIABLES -----------")
 
     warnings.warn("Disabled GPU for win32 systems for both pytoch and jax because of jax not having cuda avialable on windows")
     warnings.warn("only 1 device is used at a time, so 1 cpu or 1 gpu, change if need more")
 
-    # -- set variables
+    minibatch_size = cfg.training.minibatch_size
+    device = cfg.device if platform != "win32" else "cpu"
+    random_seed = cfg.random_seed
+    train_epochs = cfg.training.train_epochs
 
-    minibatch_size = cfg["training"]["minibatch_size"]
-    device = cfg["device"] if platform != "win32" else "cpu"
-    random_seed = cfg["random_seed"]
+    # ----------------------------------------------------------------------------------------------------------------
+    print("----------- CONFIGURING JAX -----------")
 
-    # -- jax config
+    # TODO: set jax cuda memory allocation percentage
     jax.config.update("jax_platforms", device)
     jax.config.update("jax_default_device", jax.devices(device)[0])
     # jax.config.update("jax_distributed_debug", True)
@@ -81,7 +109,8 @@ def main(cfg: DictConfig):
     print(f"jax devices: {jax.devices()}")
     print(f"jax backend: {jax.default_backend()}")
 
-    # -- setup environment, agent, experiment and unroll data
+    # ----------------------------------------------------------------------------------------------------------------
+    print("----------- SETUP ENVIRONMENT, AGENT, EXPERIMENT AND UNROLL DATA -----------")
 
     unroll_data = UnrollData(
         num_unrolls=cfg.environment.num_parallel_environments,
@@ -94,22 +123,23 @@ def main(cfg: DictConfig):
     optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
     experiment = TestExperiment()
 
-    # -- printin some information about the environment
+    # ----------------------------------------------------------------------------------------------------------------
+    print("----------- ENVIRONMENT INFO -----------")
 
     print(f"[INFO]: simulation fps: mjx = {1 / environment.mjx_model.opt.timestep}; mj = {1 / environment.mj_model.opt.timestep}")
     print(f"[INFO]: ctrl range: {environment.mjx_model.actuator_ctrlrange.copy()}")
 
-    # -- unroll and training
-
-
-
-    # reset environment and jit warmup
-    observation, mjx_data = environment.reset(seed=random_seed)
-    observation = observation.unsqueeze(1)
-    observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
+    # ----------------------------------------------------------------------------------------------------------------
+    print("----------- TRAINING LOOP -----------")
 
     # training loop
-    for e in range(cfg.training.train_epochs):
+    for e in range(train_epochs):
+
+        # reset environment and jit warmup
+        observation, mjx_data = environment.reset(seed=random_seed)
+        observation = observation.unsqueeze(1)
+        observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
+
         mean_reward = 0.0
         for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
             new_observation, reward, action, logits = unroll_step(
@@ -157,31 +187,3 @@ def main(cfg: DictConfig):
 if __name__ == "__main__":
     main()
 
-    # render_fps = 60
-
-    # # print(env.action_space)
-    # env.reset()
-
-    # try:
-    #     for i in range(1000):
-    #         # print(env.get_state_vector())
-    #         t_start = time.perf_counter()
-
-    #         action = np.random.uniform(-1, 1, size=env.action_space.shape).astype(
-    #             np.float32
-    #         )
-    #         env.do_simulation(ctrl=action, n_frames=5)
-
-    #         env.render()
-
-    #         elapsed = time.perf_counter() - t_start
-    #         target = 1.0 / render_fps
-    #         if elapsed < target:
-    #             time.sleep(target - elapsed)
-
-    #         print(f"effective fps: {1.0 / (time.perf_counter() - t_start)}")
-
-    # except Exception as e:
-    #     raise e
-    # finally:
-    #     env.close()

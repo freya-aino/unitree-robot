@@ -1,17 +1,10 @@
-import random
-from copy import copy, deepcopy
 from os import path
-from types import NoneType
 from typing import Tuple
-# import gymnasium as gym
 import jax
-import mujoco
 import numpy as np
 import torch as T
 import torch.utils.dlpack as torch_dlpack
 import jax.dlpack as jax_dlpack
-# from gymnasium import spaces
-# from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
 from mujoco import MjData, MjModel, mjx
 from mujoco.mjx import Data as MjxData
 
@@ -86,15 +79,22 @@ class MujocoMjxEnv:
 
         # replace in mjx_data
         return mjx_data.replace(ctrl=action)
-
-#
-# class Go2EnvMJX(MujocoMjxEnv):
-#     def __init__(self, **kwargs):
-#         # self.actuator_names = [ "FL_calf", "FL_hip", "FL_thigh", "FR_calf", "FR_hip", "FR_thigh", "RL_calf", "RL_hip", "RL_thigh", "RR_calf", "RR_hip", "RR_thigh" ]
-#         # self.sensor_names = [ "FL_calf_pos", "FL_calf_torque", "FL_calf_vel", "FL_hip_pos", "FL_hip_torque", "FL_hip_vel", "FL_thigh_pos", "FL_thigh_torque", "FL_thigh_vel", "FR_calf_pos", "FR_calf_torque", "FR_calf_vel", "FR_hip_pos", "FR_hip_torque", "FR_hip_vel", "FR_thigh_pos", "FR_thigh_torque", "FR_thigh_vel", "RL_calf_pos", "RL_calf_torque", "RL_calf_vel", "RL_hip_pos", "RL_hip_torque", "RL_hip_vel", "RL_thigh_pos", "RL_thigh_torque", "RL_thigh_vel", "RR_calf_pos", "RR_calf_torque", "RR_calf_vel", "RR_hip_pos", "RR_hip_torque", "RR_hip_vel", "RR_thigh_pos", "RR_thigh_torque", "RR_thigh_vel", "frame_pos", "frame_vel", 'imu_acc', 'imu_gyro', 'imu_quat' ]
-#
-#         super().__init__(**kwargs)
-
+    
+    # TODO: change to mjx_data OR make a seperate reset, step function for mj_data for testing purposes and create a seperate mjc_data version of this function
+    # @staticmethod
+    # def get_all_env_metrics(mj_data: MjData):
+    #     return {
+    #         "qvel_abs_sum": np.abs(mj_data.qvel).sum(),
+    #         "qacc_abs_sum": np.abs(mj_data.qacc).sum(),
+    #         "cvel_abs_sum": np.abs(mj_data.cvel).sum(),
+    #         "cfrc_ext_abs_sum": np.abs(mj_data.cfrc_ext).sum(),
+    #         "xfrc_applied_abs_sum": np.abs(mj_data.xfrc_applied).sum(),
+    #         "actuator_force_abs_sum": np.abs(mj_data.actuator_force).sum(),
+    #         "ctrl_abs_sum": np.abs(mj_data.ctrl).sum(),
+    #         "qfrc_actuator_abs_sum": np.abs(mj_data.qfrc_actuator).sum(),
+    #         "qfrc_passive_abs_sum": np.abs(mj_data.qfrc_passive).sum(),
+    #         "qfrc_constraint_abs_sum": np.abs(mj_data.qfrc_constraint).sum(),
+    #     }
 
 
 # class MujocoEnv(gym.Env):
