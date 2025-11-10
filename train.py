@@ -13,10 +13,12 @@ environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 # -----------------------------------------------
 
 import time
+import random
 import warnings
 import hydra
 import jax
 import mlflow
+import numpy as np
 import torch as T
 import torch.nn.functional as F
 import tqdm
@@ -34,6 +36,12 @@ from unitree_robot.training.experiments import Experiment, TestExperiment
 
 
 # -----------------------------------------------
+
+def reset_global_seed(seed: int):
+    random.seed(seed)
+    T.random.manual_seed(seed)
+    np.random.seed(seed)
+
 
 def render(render_fps: int):
 
@@ -106,6 +114,20 @@ def main(cfg: DictConfig):
     train_epochs = cfg.training.train_epochs
 
     # ----------------------------------------------------------------------------------------------------------------
+    print("----------- INITIALIZE RANDOM GENERATORS -----------")
+
+    reset_global_seed(random_seed)
+    t_seed_a = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
+    np_seed_a = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
+
+    reset_global_seed(random_seed)
+    t_seed_b = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
+    np_seed_b = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
+
+    print(f"torch seed: {t_seed_a} == {t_seed_b}")
+    print(f"numpy seed: {np_seed_a} == {np_seed_b}")
+
+    # ----------------------------------------------------------------------------------------------------------------
     print("----------- CONFIGURING JAX -----------")
 
     # TODO: set jax cuda memory allocation percentage
@@ -152,8 +174,12 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- TRAINING LOOP -----------")
 
+    # reset seed once again since model generation would always change the training seeds
+    reset_global_seed(random_seed)
+
     # reset environment and jit warmup
-    observation, mjx_data = environment.reset(seed=random_seed)
+    jax_seed = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
+    observation, mjx_data = environment.reset(seed=jax_seed)
     observation = observation.unsqueeze(1)
     observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
@@ -201,7 +227,8 @@ def main(cfg: DictConfig):
             mlflow.log_metrics(raw_losses, step=e)
 
         # reset environment
-        observation, mjx_data = environment.reset(seed=random_seed)
+        jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
+        observation, mjx_data = environment.reset(seed=jax_seed)
         observation = observation.unsqueeze(1)
         observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
