@@ -1,6 +1,7 @@
 from abc import ABC
 from mujoco.mjx import Data
 from torch import Tensor, float32, from_numpy
+import torch.nn.functional as F
 
 from unitree_robot.training.rewards import (
     BaseOrientationReward,
@@ -18,12 +19,14 @@ class Experiment(ABC):
         raise NotImplementedError
 
 class TestExperiment(Experiment):
-    def __init__(self):
+    def __init__(self, initial_mjx_data: Data):
+        self.qpos_target = from_numpy(initial_mjx_data.qpos.__array__().copy()).to(dtype=float32)
+        self.qpos_target = self.qpos_target.unsqueeze_(0)
         super().__init__()
     def __call__(self, mjx_data: Data) -> Tensor:
-        qacc_array = mjx_data.qacc.__array__().copy()
-        torch_array = from_numpy(qacc_array).to(dtype=float32).abs().mean(-1)
-        return torch_array.mean().unsqueeze(0)
+        current_qpos = from_numpy(mjx_data.qpos.__array__().copy()).to(dtype=float32)
+        loss = F.smooth_l1_loss(self.qpos_target.repeat([current_qpos.shape[0], 1]), current_qpos, reduction="none")
+        return -loss.sum(dim=-1)
 
 # class StandUpExperiment(Experiment):
 #     def __init__(

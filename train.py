@@ -1,28 +1,37 @@
+
+# -----------------------------------------------
+
+from os import environ
+
+# set xla flags for some GPUs
+xla_flags = environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+environ["XLA_FLAGS"] = xla_flags
+environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
+
+# -----------------------------------------------
+
 import time
 import warnings
 import hydra
 import jax
 import mlflow
 import torch as T
+import torch.nn.functional as F
 import tqdm
-# from flatten_dict import flatten
 from omegaconf import DictConfig, OmegaConf
-from torch import optim
-from os import environ
-from sys import platform
 from mujoco.mjx import Data as MjxData
+from flatten_dict import flatten
+from torch import optim
+from sys import platform
 
 from unitree_robot.common.agents import PPOAgent
 from unitree_robot.training.environments import MujocoMjxEnv
 from unitree_robot.common.datastructure import UnrollData
 from unitree_robot.training.experiments import Experiment, TestExperiment
 
-# -----------------------------------------------
 
-# set xla flags for some GPUs
-xla_flags = environ.get("XLA_FLAGS", "")
-xla_flags += " --xla_gpu_triton_gemm_any=True"
-environ["XLA_FLAGS"] = xla_flags
 
 # -----------------------------------------------
 
@@ -67,7 +76,7 @@ def unroll_step(
     with T.no_grad():
         action, logits = agent.get_action_and_logits(observation)
 
-    next_observation, mjx_data = environment.step(action=action.squeeze(), mjx_data=mjx_data)
+    next_observation, mjx_data = environment.step(action=F.tanh(action.squeeze()), mjx_data=mjx_data)
     next_observation = next_observation.unsqueeze(1)
 
     reward = experiment(mjx_data).unsqueeze(1).unsqueeze(1).to(device=device)
@@ -88,7 +97,7 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- SETTING VARIABLES -----------")
 
-    warnings.warn("Disabled GPU for win32 systems for both pytoch and jax because of jax not having cuda avialable on windows")
+    warnings.warn("Disabled GPU for win32 systems for both pytoch and jax because of jax not having cuda available on windows")
     warnings.warn("only 1 device is used at a time, so 1 cpu or 1 gpu, change if need more")
 
     minibatch_size = cfg.training.minibatch_size
@@ -104,7 +113,6 @@ def main(cfg: DictConfig):
     jax.config.update("jax_default_device", jax.devices(device)[0])
     # jax.config.update("jax_distributed_debug", True)
     # jax.config.update("jax_log_compiles", False)
-    jax.config.update("jax_logging_level", "ERROR")
 
     print(f"jax devices: {jax.devices()}")
     print(f"jax backend: {jax.default_backend()}")
@@ -121,67 +129,81 @@ def main(cfg: DictConfig):
     agent = PPOAgent(**cfg.agent).to(device=device)
     environment = MujocoMjxEnv(**cfg.environment)
     optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
-    experiment = TestExperiment()
+    experiment = TestExperiment(initial_mjx_data = environment.mjx_data_initial)
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- ENVIRONMENT INFO -----------")
 
+    print(f"[INFO]: initial qpos: {environment.mjx_data_initial.qpos}")
     print(f"[INFO]: simulation fps: mjx = {1 / environment.mjx_model.opt.timestep}; mj = {1 / environment.mj_model.opt.timestep}")
     print(f"[INFO]: ctrl range: {environment.mjx_model.actuator_ctrlrange.copy()}")
 
     # ----------------------------------------------------------------------------------------------------------------
+    print("----------- MLFLOW SETUP -----------")
+
+    if not mlflow.get_experiment_by_name(cfg.experiment_name):
+        mlflow.create_experiment(cfg.experiment_name)
+    mlflow.set_experiment(cfg.experiment_name)
+    print(f"[INFO]: mlflow experiment set to: '{cfg.experiment_name}'")
+
+    # enable system metric logging (cpu util, etc.)
+    mlflow.enable_system_metrics_logging()
+
+    # ----------------------------------------------------------------------------------------------------------------
     print("----------- TRAINING LOOP -----------")
 
-    # training loop
-    for e in range(train_epochs):
+    # reset environment and jit warmup
+    observation, mjx_data = environment.reset(seed=random_seed)
+    observation = observation.unsqueeze(1)
+    observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
-        # reset environment and jit warmup
+    # run training
+    with mlflow.start_run():
+
+        # log params
+        mlflow.log_params(flatten(cfg, reducer="dot"))
+
+        # training loop
+        for e in range(train_epochs):
+
+            # unroll step
+            mean_reward = 0.0
+            for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
+                new_observation, reward, action, logits = unroll_step(
+                    agent=agent,
+                    environment=environment,
+                    mjx_data=mjx_data,
+                    observation=observation,
+                    experiment=experiment,
+                    device=device
+                )
+                unroll_data.update(
+                    unroll_step=i,
+                    observation=observation,
+                    action=action,
+                    logits=logits,
+                    reward=reward,
+                )
+                observation = new_observation
+
+                mean_reward += reward.mean().detach().cpu().item() / cfg.training.unroll_length
+
+            loss, raw_losses = agent.train_step(unroll_data=unroll_data)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            print(f"loss:   {loss}")
+            print(f"reward: {mean_reward}")
+
+            mlflow.log_metric("reward", mean_reward, step=e)
+            mlflow.log_metric("loss", loss, step=e)
+            mlflow.log_metrics(raw_losses, step=e)
+
+        # reset environment
         observation, mjx_data = environment.reset(seed=random_seed)
         observation = observation.unsqueeze(1)
         observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
-
-        mean_reward = 0.0
-        for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
-            new_observation, reward, action, logits = unroll_step(
-                agent=agent,
-                environment=environment,
-                mjx_data=mjx_data,
-                observation=observation,
-                experiment=experiment,
-                device=device
-            )
-            unroll_data.update(
-                unroll_step=i,
-                observation=observation,
-                action=action,
-                logits=logits,
-                reward=reward,
-            )
-            observation = new_observation
-
-            mean_reward += reward.detach().cpu().item() / cfg.training.unroll_length
-
-        loss, raw_losses = agent.train_step(unroll_data=unroll_data)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        print(f"loss:   {loss}")
-        print(f"reward: {mean_reward}")
-
-
-    # # create and select experiment
-    # if not mlflow.get_experiment_by_name(cfg["experiment_name"]):
-    #     mlflow.create_experiment(cfg["experiment_name"])
-    # mlflow.set_experiment(cfg["experiment_name"])
-
-    # # enable system metric logging (cpu util, etc.)
-    # mlflow.enable_system_metrics_logging()
-
-    # # run training
-    # with mlflow.start_run():
-    #     mlflow.log_params(flatten(cfg, reducer="dot"))
-    #     trainer.train(**cfg["training"])
 
 
 if __name__ == "__main__":

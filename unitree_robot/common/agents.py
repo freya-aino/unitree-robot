@@ -1,9 +1,9 @@
+import math
 import torch as T
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.nn.parameter import Parameter
-
 from unitree_robot.common.datastructure import UnrollData
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 
@@ -78,8 +78,21 @@ class PPOAgent(nn.Module):
         logits = self.network.policy_forward(observation)
 
         dist = self.create_distribution(logits)
-        action = dist.sample()
+        action = dist.rsample()
         return action, logits
+
+    @staticmethod
+    def jacobian_entropy(dist: Normal):
+        entropy = dist.entropy()
+        sample = dist.rsample()
+        jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
+        return (entropy + jacobian).sum(-1)
+
+    @staticmethod
+    def jacobian_log_prob(dist: Normal, sample: T.Tensor):
+        log_p = dist.log_prob(sample)
+        jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
+        return (log_p - jacobian).sum(dim=-1).mean(dim=0)
 
     def train_step(self, unroll_data: UnrollData):
         observations = unroll_data.observations
@@ -124,9 +137,9 @@ class PPOAgent(nn.Module):
             advantages = rewards + self.discounting * vs_t_1 - values_t
 
         behaviour_dist = self.create_distribution(logits)
-        behaviour_action_log_probs = behaviour_dist.log_prob(actions)
+        behaviour_action_log_probs = self.jacobian_log_prob(behaviour_dist, actions)
         policy_dist = self.create_distribution(policy_logits)
-        policy_action_log_probs = policy_dist.log_prob(actions)
+        policy_action_log_probs = self.jacobian_log_prob(policy_dist, actions)
 
         rho_s = T.exp(policy_action_log_probs - behaviour_action_log_probs)
         surrogate_loss1 = rho_s * advantages
@@ -137,7 +150,7 @@ class PPOAgent(nn.Module):
         value_loss = F.smooth_l1_loss(vs_t, values_t)
 
         # Entropy loss
-        entropy_loss = -policy_dist.entropy().mean()
+        entropy_loss = -self.jacobian_entropy(policy_dist).mean()
 
         return (
             policy_loss * self.policy_loss_scale

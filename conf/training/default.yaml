@@ -5,5 +5,4 @@ minibatch_size: ~ # the sequence length that is trained on (UNROLL_LENGTH has to
 entropy_loss_scale: ~
 value_loss_scale: ~
 policy_loss_scale: ~
-seed: ~
 max_gradient_norm: ~

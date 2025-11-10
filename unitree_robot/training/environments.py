@@ -3,6 +3,7 @@ from typing import Tuple
 import jax
 import numpy as np
 import torch as T
+import torch.nn.functional as F
 import torch.utils.dlpack as torch_dlpack
 import jax.dlpack as jax_dlpack
 from mujoco import MjData, MjModel, mjx
@@ -53,7 +54,10 @@ class MujocoMjxEnv:
         return torch_dlpack.from_dlpack(obs)
 
     def step(self, action: T.Tensor, mjx_data: MjxData) -> Tuple[T.Tensor, MjxData]:
-        mjx_data = self.set_ctrl_(mjx_data, action)
+
+        assert (action.min() >= -1).all() and (action.max() <= 1).all(), "all action values must be between -1 and 1"
+
+        mjx_data = self.set_ctrl_(mjx_data, action / self.sim_frames_per_step)
 
         for i in range(self.sim_frames_per_step):
             mjx_data = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, mjx_data)

@@ -3,13 +3,13 @@ defaults:
   - environment: go2-flat_terrain
   - experiment: standing_up-v1
   - agent: ppo-v1
-  - training: standing_up_training
+  - training: standard_training
 
 optimizer:
   lr: 6e-4
 
-train_epochs: 5
-num_parallel_environments: 4
+train_epochs: 100
+num_parallel_environments: 2
 device: "cpu" # "cuda"
 random_seed: 0
 experiment_name: "standing_up"

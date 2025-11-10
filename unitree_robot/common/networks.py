@@ -42,7 +42,7 @@ class BasicPolicyValueNetwork(nn.Module):
                 NetworkBlock(hidden_size, hidden_size, nn.ReLU6)
                 for _ in range(num_hidden_layers)
             ],
-            NetworkBlock(hidden_size, policy_output_size, nn.Tanh),
+            NetworkBlock(hidden_size, policy_output_size, nn.Identity),
         )
 
         self.value_network = nn.Sequential(
