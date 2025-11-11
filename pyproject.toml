@@ -14,6 +14,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "hydra-core>=1.3.2",
     "flatten-dict>=0.4.2",
+    "nvidia-ml-py>=13.580.82",
 ]
 
 [tool.uv.sources]

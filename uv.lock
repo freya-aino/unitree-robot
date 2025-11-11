@@ -1938,6 +1938,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-ml-py"
+version = "13.580.82"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/6c/4a533f2c0185027c465adb6063086bc3728301e95f483665bfa9ebafb2d3/nvidia_ml_py-13.580.82.tar.gz", hash = "sha256:0c028805dc53a0e2a6985ea801888197765ac2ef8f1c9e29a7bf0d3616a5efc7", size = 47999, upload-time = "2025-09-11T16:44:56.267Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/96/d6d25a4c307d6645f4a9b91d620c0151c544ad38b5e371313a87d2761004/nvidia_ml_py-13.580.82-py3-none-any.whl", hash = "sha256:4361db337b0c551e2d101936dae2e9a60f957af26818e8c0c3a1f32b8db8d0a7", size = 49008, upload-time = "2025-09-11T16:44:54.915Z" },
+]
+
+[[package]]
 name = "nvidia-nccl-cu13"
 version = "2.27.7"
 source = { registry = "https://pypi.org/simple" }
@@ -2427,6 +2436,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f2/a5/181488fc2b9d093e3972d2a472855aae8a03f000592dbfce716a512b3359/pyparsing-3.2.5.tar.gz", hash = "sha256:2df8d5b7b2802ef88e8d016a2eb9c7aeaa923529cd251ed0fe4608275d4105b6", size = 1099274, upload-time = "2025-09-21T04:11:06.277Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/5e/1aa9a93198c6b64513c9d7752de7422c06402de6600a8767da1524f9570b/pyparsing-3.2.5-py3-none-any.whl", hash = "sha256:e38a4f02064cf41fe6593d328d0512495ad1f3d8a91c4f73fc401b3079a59a5e", size = 113890, upload-time = "2025-09-21T04:11:04.117Z" },
+]
+
+[[package]]
+name = "pyrsmi"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/31/6e87ec76e658764939c3ed7879290ba8656ca745bebe2dd07d21e07005c0/pyrsmi-0.2.0.tar.gz", hash = "sha256:b5b934e6b10ffaf0612271b98d732c99b94cca773e6e86003b6e938a53bd688f", size = 31570, upload-time = "2024-09-25T01:05:43.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e2/4c/c1de90e392f422d34e4cde05947a46f2419a50e469533470d2e422696687/pyrsmi-0.2.0-py2.py3-none-any.whl", hash = "sha256:594388e5e0e916555d8b92b8b73e38aa73903a9d03ad89c172fefa187fc3ea41", size = 12250, upload-time = "2024-09-25T01:05:42.679Z" },
 ]
 
 [[package]]
@@ -3101,6 +3119,8 @@ dependencies = [
     { name = "jax", extra = ["cuda13"], marker = "sys_platform == 'linux'" },
     { name = "mlflow" },
     { name = "mujoco-mjx" },
+    { name = "nvidia-ml-py" },
+    { name = "pyrsmi" },
     { name = "torch" },
     { name = "tqdm" },
     { name = "warp-lang" },
@@ -3119,6 +3139,8 @@ requires-dist = [
     { name = "jax", extras = ["cuda13"], marker = "sys_platform == 'linux'" },
     { name = "mlflow", specifier = ">=3.5.1" },
     { name = "mujoco-mjx", specifier = ">=3.3.7" },
+    { name = "nvidia-ml-py", specifier = ">=13.580.82" },
+    { name = "pyrsmi", specifier = ">=0.2.0" },
     { name = "torch", specifier = ">=2.9.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "warp-lang", specifier = ">=1.10.0" },

@@ -1,13 +1,16 @@
 from os import path
 from typing import Tuple
+from functools import partial
 import jax
 import numpy as np
 import torch as T
 import torch.nn.functional as F
 import torch.utils.dlpack as torch_dlpack
 import jax.dlpack as jax_dlpack
+import jax.numpy as npx
 from mujoco import MjData, MjModel, mjx
 from mujoco.mjx import Data as MjxData
+from mujoco.mjx import Model as MjxModel
 
 
 class MujocoMjxEnv:
@@ -44,23 +47,26 @@ class MujocoMjxEnv:
 
         # -- jit the step function for distribution
         self.jit_step = jax.jit(mjx.step)
+        # self.jit_forward = jax.jit(mjx.forward) # relevant for forward kinematics
 
         # -- set relevant control spaces, observation spaces and mujoco data
-        self.action_ranges = self.mjx_model.actuator_ctrlrange.copy().astype(np.float32)
+        self.action_ranges = self.mjx_model.actuator_ctrlrange.copy().astype(npx.float32)
+
 
     @staticmethod
     def _get_observations(mjx_data: MjxData) -> T.Tensor:
-        obs = jax.numpy.concatenate([mjx_data.qpos.copy(), mjx_data.qvel.copy()], axis=-1, dtype=jax.numpy.float32)
+        obs = jax.numpy.concatenate([mjx_data.qpos.copy(), mjx_data.qvel.copy()], axis=-1, dtype=npx.float32)
         return torch_dlpack.from_dlpack(obs)
 
     def step(self, action: T.Tensor, mjx_data: MjxData) -> Tuple[T.Tensor, MjxData]:
 
         assert (action.min() >= -1).all() and (action.max() <= 1).all(), "all action values must be between -1 and 1"
 
-        mjx_data = self.set_ctrl_(mjx_data, action / self.sim_frames_per_step)
+        mjx_data = self.set_ctrl_(mjx_data, action)
 
         for i in range(self.sim_frames_per_step):
             mjx_data = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, mjx_data)
+            # mjx_data = jax.vmap(self.jit_forward, in_axes=(None, 0))(self.mjx_model, mjx_data) # relevant for forward kinematics
 
         return self._get_observations(mjx_data), mjx_data
 
@@ -68,7 +74,7 @@ class MujocoMjxEnv:
 
         rng = jax.random.PRNGKey(seed)
         rng = jax.random.split(rng, self.num_parallel_environments)
-        mjx_data = jax.vmap(lambda r: self.mjx_data_initial.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data_initial.qpos.shape) * self.initial_noise_scale))(rng)
+        mjx_data = jax.vmap(lambda r: self.mjx_data_initial.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data_initial.qpos.shape, dtype=npx.float32) * self.initial_noise_scale))(rng)
 
         return self._get_observations(mjx_data), mjx_data
 

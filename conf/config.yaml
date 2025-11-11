@@ -9,7 +9,8 @@ optimizer:
   lr: 6e-4
 
 train_epochs: 100
-num_parallel_environments: 2
+num_parallel_environments: 100
 device: "cpu" # "cuda"
 random_seed: 0
 experiment_name: "standing_up"
+xla_gpu_memory_fraction: 0.6 # Fraction of GPU memory to allocate when using XLA on GPU for jax

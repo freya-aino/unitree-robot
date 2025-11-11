@@ -83,8 +83,8 @@ class PPOAgent(nn.Module):
 
     @staticmethod
     def jacobian_entropy(dist: Normal):
-        entropy = dist.entropy()
         sample = dist.rsample()
+        entropy = dist.entropy()
         jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
         return (entropy + jacobian).sum(-1)
 
@@ -109,7 +109,7 @@ class PPOAgent(nn.Module):
             rewards.transpose(1, 2),
             stride=1,
             kernel_size=self.moving_average_window_size,
-            padding=self.moving_average_window_size // 2,
+            padding=self.moving_average_window_size // 2
         ).transpose(1, 2)[:, :-1, :]
 
         policy_logits = self.network.policy_forward(observations)
@@ -124,6 +124,11 @@ class PPOAgent(nn.Module):
         actions = actions[:, :-1]
         logits = logits[:, :-1]
 
+        behaviour_dist = self.create_distribution(logits)
+        behaviour_action_log_probs = self.jacobian_log_prob(behaviour_dist, actions)
+        policy_dist = self.create_distribution(policy_logits)
+        policy_action_log_probs = self.jacobian_log_prob(policy_dist, actions)
+
         # compute GAE
         with T.no_grad():
             # calculate deltas for each timestep simultainously
@@ -136,10 +141,6 @@ class PPOAgent(nn.Module):
             vs_t_1 = T.cat([vs_t[:, 1:], bootstrap_value], 1)
             advantages = rewards + self.discounting * vs_t_1 - values_t
 
-        behaviour_dist = self.create_distribution(logits)
-        behaviour_action_log_probs = self.jacobian_log_prob(behaviour_dist, actions)
-        policy_dist = self.create_distribution(policy_logits)
-        policy_action_log_probs = self.jacobian_log_prob(policy_dist, actions)
 
         rho_s = T.exp(policy_action_log_probs - behaviour_action_log_probs)
         surrogate_loss1 = rho_s * advantages
@@ -147,7 +148,7 @@ class PPOAgent(nn.Module):
         policy_loss = -T.mean(T.minimum(surrogate_loss1, surrogate_loss2))
 
         # Value function loss
-        value_loss = F.smooth_l1_loss(vs_t, values_t)
+        value_loss = ((vs_t - values_t) ** 2).mean()
 
         # Entropy loss
         entropy_loss = -self.jacobian_entropy(policy_dist).mean()

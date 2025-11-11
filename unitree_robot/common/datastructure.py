@@ -15,10 +15,10 @@ class UnrollData(nn.Module):
     ):
         super().__init__()
 
-        self.observations = zeros(size=[num_unrolls, unroll_length, observation_size])
-        self.logits = zeros(size=[num_unrolls, unroll_length, action_size * 2])
-        self.actions = zeros(size=[num_unrolls, unroll_length, action_size])
-        self.rewards = zeros(size=[num_unrolls, unroll_length, 1])
+        self.observations = nn.Parameter(zeros(size=[num_unrolls, unroll_length, observation_size]), requires_grad=False)
+        self.logits = nn.Parameter(zeros(size=[num_unrolls, unroll_length, action_size * 2]), requires_grad=False)
+        self.actions = nn.Parameter(zeros(size=[num_unrolls, unroll_length, action_size]), requires_grad=False)
+        self.rewards = nn.Parameter(zeros(size=[num_unrolls, unroll_length, 1]), requires_grad=False)
 
     def update(
         self,
@@ -38,6 +38,7 @@ class UnrollData(nn.Module):
         is_logits_good = ~(self.logits.isnan().any() | self.logits.isinf().any())
         is_actions_good = ~(self.actions.isnan().any() | self.actions.isinf().any())
         is_rewards_good = ~(self.rewards.isnan().any() | self.rewards.isinf().any())
+        return is_observation_good and is_logits_good and is_actions_good and is_rewards_good
 
     # TODO - do a type of validation that check for abnormal values during training (e.g. actions outside of bounds or logits very small or very big)
 

@@ -1,14 +1,4 @@
 
-# -----------------------------------------------
-
-from os import environ
-
-# set xla flags for some GPUs
-xla_flags = environ.get("XLA_FLAGS", "")
-xla_flags += " --xla_gpu_triton_gemm_any=True"
-environ["XLA_FLAGS"] = xla_flags
-environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
-environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 # -----------------------------------------------
 
@@ -38,7 +28,7 @@ from unitree_robot.training.experiments import Experiment, TestExperiment
 # -----------------------------------------------
 
 def reset_global_seed(seed: int):
-    random.seed(seed)
+    # random.seed(seed)
     T.random.manual_seed(seed)
     np.random.seed(seed)
 
@@ -103,12 +93,28 @@ def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
 
     # ----------------------------------------------------------------------------------------------------------------
+    print("----------- SYSTEM VARIABLES -----------")
+
+    from os import environ
+
+    # set xla flags for some GPUs
+    xla_flags = environ.get("XLA_FLAGS", "")
+    xla_flags += " --xla_gpu_triton_gemm_any=True"
+    environ["XLA_FLAGS"] = xla_flags
+    environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+    environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = f"{cfg.xla_gpu_memory_fraction}"
+
+    print(f"[INFO]: XLA_FLAGS={environ['XLA_FLAGS']}")
+    print(f"[INFO]: XLA_PYTHON_CLIENT_PREALLOCATE={environ['XLA_PYTHON_CLIENT_PREALLOCATE']}")
+    print(f"[INFO]: XLA_PYTHON_CLIENT_MEM_FRACTION={environ['XLA_PYTHON_CLIENT_MEM_FRACTION']}")
+
+    # ----------------------------------------------------------------------------------------------------------------
     print("----------- SETTING VARIABLES -----------")
 
-    warnings.warn("Disabled GPU for win32 systems for both pytoch and jax because of jax not having cuda available on windows")
+    if platform == "win32":
+        warnings.warn("Disabled GPU for win32 systems for both pytoch and jax because of jax not having cuda available on windows")
     warnings.warn("only 1 device is used at a time, so 1 cpu or 1 gpu, change if need more")
 
-    minibatch_size = cfg.training.minibatch_size
     device = cfg.device if platform != "win32" else "cpu"
     random_seed = cfg.random_seed
     train_epochs = cfg.training.train_epochs
@@ -116,16 +122,19 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- INITIALIZE RANDOM GENERATORS -----------")
 
+    # sanity check seed setting
     reset_global_seed(random_seed)
     t_seed_a = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
     np_seed_a = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
-
     reset_global_seed(random_seed)
     t_seed_b = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
     np_seed_b = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
-
     print(f"torch seed: {t_seed_a} == {t_seed_b}")
     print(f"numpy seed: {np_seed_a} == {np_seed_b}")
+
+    # set cudnn for reproducibility
+    T.backends.cudnn.deterministic = True
+    T.backends.cudnn.benchmark = False
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- CONFIGURING JAX -----------")
@@ -135,6 +144,11 @@ def main(cfg: DictConfig):
     jax.config.update("jax_default_device", jax.devices(device)[0])
     # jax.config.update("jax_distributed_debug", True)
     # jax.config.update("jax_log_compiles", False)
+    jax.config.update("jax_disable_most_optimizations", True) # reduce non determinism
+    jax.config.update("jax_debug_nans", True)
+    jax.config.update("jax_enable_x64", False)
+    # jax.config.update("jax_numpy_rank_promotion", "raise")
+    jax.config.update("jax_default_matmul_precision", "float32")
 
     print(f"jax devices: {jax.devices()}")
     print(f"jax backend: {jax.default_backend()}")
@@ -147,8 +161,8 @@ def main(cfg: DictConfig):
         unroll_length=cfg.training.unroll_length,
         observation_size=cfg.environment.observation_size,
         action_size=cfg.environment.action_size,
-    ).to(device=device)
-    agent = PPOAgent(**cfg.agent).to(device=device)
+    ).to(device=device, dtype=T.float32)
+    agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
     environment = MujocoMjxEnv(**cfg.environment)
     optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
     experiment = TestExperiment(initial_mjx_data = environment.mjx_data_initial)
@@ -163,6 +177,7 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- MLFLOW SETUP -----------")
 
+    # set experiment
     if not mlflow.get_experiment_by_name(cfg.experiment_name):
         mlflow.create_experiment(cfg.experiment_name)
     mlflow.set_experiment(cfg.experiment_name)
@@ -195,6 +210,7 @@ def main(cfg: DictConfig):
             # unroll step
             mean_reward = 0.0
             for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
+
                 new_observation, reward, action, logits = unroll_step(
                     agent=agent,
                     environment=environment,
@@ -214,23 +230,23 @@ def main(cfg: DictConfig):
 
                 mean_reward += reward.mean().detach().cpu().item() / cfg.training.unroll_length
 
-            loss, raw_losses = agent.train_step(unroll_data=unroll_data)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            print(f"loss:   {loss}")
-            print(f"reward: {mean_reward}")
+            # train step
+            assert unroll_data.validate(), "unroll data is not valid, some NaN or inf values found"
+            with T.autograd.detect_anomaly():
+                loss, raw_losses = agent.train_step(unroll_data=unroll_data)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
             mlflow.log_metric("reward", mean_reward, step=e)
             mlflow.log_metric("loss", loss, step=e)
             mlflow.log_metrics(raw_losses, step=e)
 
-        # reset environment
-        jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
-        observation, mjx_data = environment.reset(seed=jax_seed)
-        observation = observation.unsqueeze(1)
-        observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
+            # reset environment
+            jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
+            observation, mjx_data = environment.reset(seed=jax_seed)
+            observation = observation.unsqueeze(1)
+            observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
 
 if __name__ == "__main__":
