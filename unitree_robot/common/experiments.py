@@ -3,7 +3,7 @@ from mujoco.mjx import Data
 from torch import Tensor, float32, from_numpy
 import torch.nn.functional as F
 
-from unitree_robot.training.rewards import (
+from unitree_robot.common.rewards import (
     BaseOrientationReward,
     EnergyReward,
     BodyHeightReward,
@@ -24,9 +24,9 @@ class TestExperiment(Experiment):
         self.qpos_target = self.qpos_target.unsqueeze_(0)
         super().__init__()
     def __call__(self, mjx_data: Data) -> Tensor:
-        current_qpos = from_numpy(mjx_data.qpos.__array__().copy()).to(dtype=float32)
-        loss = F.smooth_l1_loss(self.qpos_target.repeat([current_qpos.shape[0], 1]), current_qpos, reduction="none")
-        return -loss.sum(dim=-1)
+        # current_qpos = from_numpy(mjx_data.qpos.__array__().copy()).to(dtype=float32)
+        # loss = F.smooth_l1_loss(self.qpos_target.repeat([current_qpos.shape[0], 1]), current_qpos, reduction="none")
+        return from_numpy(mjx_data.ctrl.__array__().copy() ** 2).sum(-1)
 
 # class StandUpExperiment(Experiment):
 #     def __init__(
@@ -52,8 +52,8 @@ class TestExperiment(Experiment):
 #                 scale=joint_limit_reward_scale, mj_model=mj_model
 #             ),
 #         }
-#
+
 #         super().__init__()
-#
+
 #     def __call__(self, mj_data: MjData):
 #         return super().__call__(**{k: self.rewards[k](mj_data) for k in self.rewards})

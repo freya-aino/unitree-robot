@@ -1,9 +1,11 @@
 from abc import ABC
 import numpy as np
 from typing import List
-from mujoco import MjData, MjModel
+# from mujoco import MjData, MjModel
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
+from mujoco.mjx import Model as MjxModel
+from mujoco.mjx import Data as MjData
 
 # explanation for mjData fields: https://bhaswanth-a.github.io/posts/mujoco-basics/
 
@@ -34,11 +36,11 @@ class Reward(ABC):
 class BaseOrientationReward(Reward):
     def __init__(
         self,
-        body_name: str,
+        body_index: str,
         scale: float,
         angle_vector: NDArray[np.float32] = np.array([1.0, 0.0, 0.0]),
     ):
-        self.body_name = body_name
+        # self.body_name = body_name
         self.angle_vector = angle_vector
         super().__init__(scale=scale)
 
@@ -73,12 +75,12 @@ class BodyDistanceReward(Reward):
 class BodyHeightReward(BodyDistanceReward):
     def __init__(
         self,
-        body_name_from: List[str] = ["base_link"],
-        body_names_to: List[str] = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+        body_index_from: List[int] = [], # ["base_link"],
+        body_index_to: List[int] = [], # ["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
         scale: float = 1.0,
     ):
         super().__init__(
-            body_names_from=body_name_from, body_names_to=body_names_to, scale=scale
+            # body_names_from=body_name_from, body_names_to=body_names_to, scale=scale
         )
 
     def __call__(self, data: MjData):
@@ -97,27 +99,27 @@ class EnergyReward(Reward):
 class JointLimitReward(Reward):
     def __init__(
         self,
-        mj_model: MjModel,
+        mjx_model: MjxModel,
         scale: float = 1.0,
-        joint_names: List = [
-            "FL_calf_joint",
-            "FL_hip_joint",
-            "FL_thigh_joint",
-            "FR_calf_joint",
-            "FR_hip_joint",
-            "FR_thigh_joint",
-            "RL_calf_joint",
-            "RL_hip_joint",
-            "RL_thigh_joint",
-            "RR_calf_joint",
-            "RR_hip_joint",
-            "RR_thigh_joint",
-        ],
+        # joint_names: List = [
+        #     "FL_calf_joint",
+        #     "FL_hip_joint",
+        #     "FL_thigh_joint",
+        #     "FR_calf_joint",
+        #     "FR_hip_joint",
+        #     "FR_thigh_joint",
+        #     "RL_calf_joint",
+        #     "RL_hip_joint",
+        #     "RL_thigh_joint",
+        #     "RR_calf_joint",
+        #     "RR_hip_joint",
+        #     "RR_thigh_joint",
+        # ],
     ):
-        self.joint_names = joint_names
-        self.joint_ranges_min, self.joint_ranges_max = np.stack(
-            [mj_model.joint(n).range for n in joint_names]
-        ).T
+        # self.joint_indecies = joint_indecies
+        # self.joint_ranges_min, self.joint_ranges_max = np.stack(
+        #     [mj_model.joint(n).range for n in joint_names]
+        # ).T
         super().__init__(scale=scale)
 
     def __call__(self, data: MjData):

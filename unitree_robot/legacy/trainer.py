@@ -15,8 +15,8 @@ from tqdm import tqdm
 
 from unitree_robot.common.agents import PPOAgent
 from unitree_robot.common.datastructure import UnrollData
-from unitree_robot.training.environments import MujocoEnv
-from unitree_robot.training.experiments import Experiment
+from unitree_robot.common.environments import MujocoEnv
+from unitree_robot.common.experiments import Experiment
 
 
 

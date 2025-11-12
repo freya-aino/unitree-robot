@@ -20,7 +20,7 @@ class MujocoMjxEnv:
         self,
         model_path: str,
         sim_frames_per_step: int,
-        # mujoco_timestep: float,
+        mujoco_timestep: float,
         initial_noise_scale: float,
         num_parallel_environments: int,
         observation_size: int,
@@ -36,10 +36,11 @@ class MujocoMjxEnv:
         # -- load mujoco model and create data
         assert path.exists(model_path), f"File {model_path} does not exist"
         self.mj_model = MjModel.from_xml_path(model_path)
-        self.mj_data = MjData(self.mj_model)
 
         # -- set mujoco model parameter
-        # self.mj_model.opt.timestep = mujoco_timestep # INFO - currently there is no reason to switch this on, so default is just "safer"
+        self.mj_model.opt.timestep = mujoco_timestep # INFO - currently there is no reason to switch this on, so default is just "safer"
+
+        self.mj_data = MjData(self.mj_model)
 
         # --- instantiate mjx model and data
         self.mjx_model = mjx.put_model(self.mj_model)

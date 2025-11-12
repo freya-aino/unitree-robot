@@ -8,6 +8,7 @@ from unitree_robot.common.datastructure import UnrollData
 from unitree_robot.common.networks import BasicPolicyValueNetwork
 
 
+
 class PPOAgent(nn.Module):
     """Standard PPO Agent with GAE and observation normalization."""
 
@@ -26,9 +27,8 @@ class PPOAgent(nn.Module):
         policy_loss_scale: float,
         value_loss_scale: float,
         entropy_loss_scale: float,
-        softplus_sharpness_factor: float,
     ):
-        super().__init__()
+        super(PPOAgent, self).__init__()
 
         self.network = BasicPolicyValueNetwork(
             input_size=observation_size,
@@ -42,7 +42,6 @@ class PPOAgent(nn.Module):
         self.discounting = discounting
         self.reward_scaling = reward_scaling
         self.epsilon = epsilon
-        self.softplus_sharpness_factor = softplus_sharpness_factor
 
         self.policy_loss_scale = policy_loss_scale
         self.value_loss_scale = value_loss_scale
@@ -62,11 +61,30 @@ class PPOAgent(nn.Module):
             requires_grad=False,
         )
 
+        self.running_mean = nn.Parameter(T.zeros(observation_size), requires_grad=False)
+        self.running_variance = nn.Parameter(T.ones(observation_size), requires_grad=False)
+        self.num_steps = nn.Parameter(T.tensor(0.0), requires_grad=False)
+
+    def update_normalization(self, observation):
+        self.num_steps += observation.shape[0] * observation.shape[1]
+        input_to_old_mean = observation - self.running_mean
+        mean_diff = T.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
+        self.running_mean[:] = self.running_mean + mean_diff
+        input_to_new_mean = observation - self.running_mean
+        var_diff = T.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
+        self.running_variance[:] = self.running_variance + var_diff
+
+    def normalize(self, observation):
+        variance = self.running_variance / (self.num_steps + 1.0)
+        variance = T.clip(variance, 1e-6, 1e6)
+        return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
+
     def create_distribution(self, logits: T.Tensor):
         loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
+        scale = T.clip(F.softplus(scale), 0.01, 2.0)
         return Normal(
             loc=loc,
-            scale=F.softplus(scale, beta=self.softplus_sharpness_factor) + 0.001,
+            scale=scale + 0.001,
         )
         # return Normal(
         #     loc=loc,
@@ -74,35 +92,36 @@ class PPOAgent(nn.Module):
         # )
 
     def get_action_and_logits(self, observation: T.Tensor):
-        # observation = self.normalize(observation # TODO - this is still missing from the original code
+        observation = self.normalize(observation)
         logits = self.network.policy_forward(observation)
-
         dist = self.create_distribution(logits)
         action = dist.rsample()
         return action, logits
 
     @staticmethod
     def jacobian_entropy(dist: Normal):
+        log_normalized = 0.5 * math.log(2 * math.pi) + T.log(dist.scale)
+        entropy = 0.5 + log_normalized
+        entropy = entropy * T.ones_like(dist.loc)
         sample = dist.rsample()
-        entropy = dist.entropy()
+        # entropy = dist.entropy()
         jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
         return (entropy + jacobian).sum(-1)
 
     @staticmethod
     def jacobian_log_prob(dist: Normal, sample: T.Tensor):
-        log_p = dist.log_prob(sample)
+        log_unnormalized = -0.5 * ((sample - dist.loc) / dist.scale).square()
+        log_normalized = 0.5 * math.log(2 * math.pi) + T.log(dist.scale)
+        # log_p = dist.log_prob(sample)
         jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
-        return (log_p - jacobian).sum(dim=-1).mean(dim=0)
+        # return (log_p - jacobian).sum(dim=-1).mean(dim=0)
+        return (log_unnormalized - log_normalized - jacobian).sum(dim=-1).mean()
 
     def train_step(self, unroll_data: UnrollData):
-        observations = unroll_data.observations
+        observations = self.normalize(unroll_data.observations)
         logits = unroll_data.logits
         actions = unroll_data.actions
         rewards = unroll_data.rewards
-
-        # normalize rewards
-        std, mu = T.std_mean(rewards, dim=1, keepdim=True)
-        rewards = (rewards - mu) / std
 
         # moving average rewards
         rewards = F.avg_pool1d(
@@ -112,6 +131,11 @@ class PPOAgent(nn.Module):
             padding=self.moving_average_window_size // 2
         ).transpose(1, 2)[:, :-1, :]
 
+        # normalize rewards
+        std, mu = T.std_mean(rewards, dim=1, keepdim=True)
+        rewards = (rewards - mu) / std
+
+        # compute policy logits and values
         policy_logits = self.network.policy_forward(observations)
         values = self.network.value_forward(observations)
 
@@ -141,14 +165,13 @@ class PPOAgent(nn.Module):
             vs_t_1 = T.cat([vs_t[:, 1:], bootstrap_value], 1)
             advantages = rewards + self.discounting * vs_t_1 - values_t
 
-
         rho_s = T.exp(policy_action_log_probs - behaviour_action_log_probs)
         surrogate_loss1 = rho_s * advantages
         surrogate_loss2 = rho_s.clip(1 - self.epsilon, 1 + self.epsilon) * advantages
         policy_loss = -T.mean(T.minimum(surrogate_loss1, surrogate_loss2))
 
         # Value function loss
-        value_loss = ((vs_t - values_t) ** 2).mean()
+        value_loss = ((vs_t - values_t) ** 2).mean(dim=-1).mean()
 
         # Entropy loss
         entropy_loss = -self.jacobian_entropy(policy_dist).mean()
@@ -162,3 +185,163 @@ class PPOAgent(nn.Module):
             "value_loss": value_loss,
             "entropy_loss": entropy_loss,
         })
+
+
+# class PPOAgentGoogle(nn.Module):
+#   """Standard PPO Agent with GAE and observation normalization."""
+#     def __init__(
+#         # self,
+#         # policy_layers: Sequence[int],
+#         # value_layers: Sequence[int],
+#         # device: str):
+#         # self,
+#         # observation_size: int,
+#         # action_size: int,
+#         # network_hidden_size: int,
+#         # num_hidden_layers: int,
+#         # discounting: float,
+#         # lambda_: float,
+#         # epsilon: float,
+#         # moving_average_window_size: int,
+#         # reward_scaling: float,
+#         # train_sequence_length: int,
+#         # policy_loss_scale: float,
+#         # value_loss_scale: float,
+#         # entropy_loss_scale: float,
+#         # softplus_sharpness_factor: float):
+#         super(PPOAgentGoogle, self).__init__()
+
+#         # self.num_steps = T.zeros(())
+#         # self.running_mean = T.zeros(policy_layers[0])
+#         # self.running_variance = T.zeros(policy_layers[0])
+
+#         self.entropy_cost = entropy_loss_scale
+#         self.discounting = discounting
+#         self.reward_scaling = reward_scaling
+#         self.lambda_ = 0.95
+#         self.epsilon = 0.3
+#         # self.device = device
+    
+#     def dist_create(self, logits):
+#         """Normal followed by tanh.
+#         torch.distribution doesn't work with torch.jit, so we roll our own."""
+#         loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
+#         scale = F.softplus(scale) + .001
+#         return loc, scale
+
+#     def dist_sample_no_postprocess(self, loc, scale):
+#         return T.normal(loc, scale)
+
+#     @classmethod
+#     def dist_postprocess(cls, x):
+#         return T.tanh(x)
+
+#     def dist_entropy(self, loc, scale):
+#         log_normalized = 0.5 * math.log(2 * math.pi) + T.log(scale)
+#         entropy = 0.5 + log_normalized
+#         entropy = entropy * T.ones_like(loc)
+#         dist = T.normal(loc, scale)
+#         log_det_jacobian = 2 * (math.log(2) - dist - F.softplus(-2 * dist))
+#         entropy = entropy + log_det_jacobian
+#         return entropy.sum(dim=-1)
+
+#     def dist_log_prob(self, loc, scale, dist):
+#         log_unnormalized = -0.5 * ((dist - loc) / scale).square()
+#         log_normalized = 0.5 * math.log(2 * math.pi) + T.log(scale)
+#         log_det_jacobian = 2 * (math.log(2) - dist - F.softplus(-2 * dist))
+#         log_prob = log_unnormalized - log_normalized - log_det_jacobian
+#         return log_prob.sum(dim=-1)
+
+#     def update_normalization(self, observation):
+#         self.num_steps += observation.shape[0] * observation.shape[1]
+#         input_to_old_mean = observation - self.running_mean
+#         mean_diff = T.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
+#         self.running_mean = self.running_mean + mean_diff
+#         input_to_new_mean = observation - self.running_mean
+#         var_diff = T.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
+#         self.running_variance = self.running_variance + var_diff
+
+#     def normalize(self, observation):
+#         variance = self.running_variance / (self.num_steps + 1.0)
+#         variance = T.clip(variance, 1e-6, 1e6)
+#         return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
+
+#     def get_logits_action(self, observation):
+#         observation = self.normalize(observation)
+#         logits = self.policy(observation)
+#         loc, scale = self.dist_create(logits)
+#         action = self.dist_sample_no_postprocess(loc, scale)
+#         return logits, action
+
+#   def compute_gae(
+#         self,
+#         truncation, 
+#         termination, 
+#         reward, 
+#         values,
+#         bootstrap_value
+#     ):
+#     truncation_mask = 1 - truncation
+#     # Append bootstrapped value to get [v1, ..., v_t+1]
+#     values_t_plus_1 = T.cat(
+#         [values[1:], T.unsqueeze(bootstrap_value, 0)], dim=0)
+#     deltas = reward + self.discounting * (
+#         1 - termination) * values_t_plus_1 - values
+#     deltas *= truncation_mask
+
+#     acc = T.zeros_like(bootstrap_value)
+#     vs_minus_v_xs = T.zeros_like(truncation_mask)
+
+#     for ti in range(truncation_mask.shape[0]):
+#       ti = truncation_mask.shape[0] - ti - 1
+#       acc = deltas[ti] + self.discounting * (
+#           1 - termination[ti]) * truncation_mask[ti] * self.lambda_ * acc
+#       vs_minus_v_xs[ti] = acc
+
+#     # Add V(x_s) to get v_s.
+#     vs = vs_minus_v_xs + values
+#     vs_t_plus_1 = T.cat([vs[1:], T.unsqueeze(bootstrap_value, 0)], 0)
+#     advantages = (reward + self.discounting *
+#                   (1 - termination) * vs_t_plus_1 - values) * truncation_mask
+#     return vs, advantages
+
+#   def loss(self, td: Dict[str, T.Tensor]):
+#     observation = self.normalize(td['observation'])
+#     policy_logits = self.policy(observation[:-1])
+#     baseline = self.value(observation)
+#     baseline = T.squeeze(baseline, dim=-1)
+
+#     # Use last baseline value (from the value function) to bootstrap.
+#     bootstrap_value = baseline[-1]
+#     baseline = baseline[:-1]
+#     reward = td['reward'] * self.reward_scaling
+#     termination = td['done'] * (1 - td['truncation'])
+
+#     loc, scale = self.dist_create(td['logits'])
+#     behaviour_action_log_probs = self.dist_log_prob(loc, scale, td['action'])
+#     loc, scale = self.dist_create(policy_logits)
+#     target_action_log_probs = self.dist_log_prob(loc, scale, td['action'])
+
+#     with T.no_grad():
+#       vs, advantages = self.compute_gae(
+#           truncation=td['truncation'],
+#           termination=termination,
+#           reward=reward,
+#           values=baseline,
+#           bootstrap_value=bootstrap_value)
+
+#     rho_s = T.exp(target_action_log_probs - behaviour_action_log_probs)
+#     surrogate_loss1 = rho_s * advantages
+#     surrogate_loss2 = rho_s.clip(1 - self.epsilon,
+#                                  1 + self.epsilon) * advantages
+#     policy_loss = -T.mean(T.minimum(surrogate_loss1, surrogate_loss2))
+
+#     # Value function loss
+#     v_error = vs - baseline
+#     v_loss = T.mean(v_error * v_error) * 0.5 * 0.5
+
+#     # Entropy reward
+#     entropy = T.mean(self.dist_entropy(loc, scale))
+#     entropy_loss = self.entropy_cost * -entropy
+
+#     return policy_loss + v_loss + entropy_loss

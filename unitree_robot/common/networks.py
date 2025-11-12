@@ -8,20 +8,21 @@ class NetworkBlock(nn.Module):
     def __init__(self, input_size: int, output_size: int, final_act_f):
         super().__init__()
 
-        self.bn = nn.BatchNorm1d(input_size)
+        # self.bn = nn.BatchNorm1d(input_size)
         self.ln = nn.LayerNorm(input_size)
 
-        self.nn1 = nn.Linear(input_size, input_size)
+        # self.nn1 = nn.Linear(input_size, input_size)
         self.nn2 = nn.Linear(input_size, input_size)
         self.nn3 = nn.Linear(input_size, output_size)
 
         self.final_act = final_act_f()
-        self.act = nn.ReLU6()
+        self.act = nn.SiLU()
 
     def forward(self, x: T.Tensor) -> T.Tensor:
-        x = self.act(self.ln(self.nn1(x)))
-        x = self.act(self.bn(self.nn2(x).permute(0, 2, 1)).permute(0, 2, 1))
-        return self.final_act(self.nn3(x))
+        # x = self.act(self.ln(self.nn1(x)))
+        # x = self.act(self.bn(self.nn2(x).permute(0, 2, 1)).permute(0, 2, 1))
+        # return self.final_act(self.nn3(x))
+        return self.final_act(self.nn3(self.act(self.ln(self.nn2(x)))))
 
 
 class BasicPolicyValueNetwork(nn.Module):
@@ -37,18 +38,18 @@ class BasicPolicyValueNetwork(nn.Module):
 
 
         self.policy_network = nn.Sequential(
-            NetworkBlock(input_size, hidden_size, nn.ReLU6),
+            NetworkBlock(input_size, hidden_size, nn.SiLU),
             *[
-                NetworkBlock(hidden_size, hidden_size, nn.ReLU6)
+                NetworkBlock(hidden_size, hidden_size, nn.SiLU)
                 for _ in range(num_hidden_layers)
             ],
             NetworkBlock(hidden_size, policy_output_size, nn.Identity),
         )
 
         self.value_network = nn.Sequential(
-            NetworkBlock(input_size, hidden_size, nn.ReLU6),
+            NetworkBlock(input_size, hidden_size, nn.SiLU),
             *[
-                NetworkBlock(hidden_size, hidden_size, nn.ReLU6)
+                NetworkBlock(hidden_size, hidden_size, nn.SiLU)
                 for _ in range(num_hidden_layers)
             ],
             NetworkBlock(hidden_size, value_output_size, nn.Identity),
