@@ -2,7 +2,4 @@ train_epochs: ${train_epochs}
 
 unroll_length: ~ # number of actions taken in the environment (inbetween these actions there are SIM_FRAMES_PER_STEP steps of simulation)
 minibatch_size: ~ # the sequence length that is trained on (UNROLL_LENGTH has to be divisible by this number)
-entropy_loss_scale: ~
-value_loss_scale: ~
-policy_loss_scale: ~
 max_gradient_norm: ~

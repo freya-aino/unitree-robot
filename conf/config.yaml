@@ -6,11 +6,20 @@ defaults:
   - training: standard_training
 
 optimizer:
-  lr: 6e-4
+  lr: 8e-3
+lr_scheduler:
+  linear_lr_warmup:
+    start_factor: 0.25 # the factor of lr we begin at, going up to end_factor
+    end_factor: 1.0
+    total_iters: 20
+  cosine_annealing_warm_restarts:
+    T_0: 40 # number of epochs for the first restart
+    T_mult: 1 # a factor increases T_i after a restart (i.e.: 2 means double the number of epochs after each restart)
+    eta_min: 1e-5
 
-train_epochs: 100
-num_parallel_environments: 100
-device: "cpu" # "cuda"
+train_epochs: 500
+num_parallel_environments: 200
+device: "cuda" # "cpu" or "cuda"
 random_seed: 0
 experiment_name: "standing_up"
 xla_gpu_memory_fraction: 0.6 # Fraction of GPU memory to allocate when using XLA on GPU for jax

@@ -2,6 +2,9 @@ defaults:
   - default
   - _self_
 
+sim_frames_per_step: 5 # TODO this should be 5 but 1 is faster for debugging
+mujoco_timestep: 0.005 # 0.0005 - 0.005, 0.002 is the standard value
+
 model_path: "./external/unitree_mj_models/go2/scene.xml"
 initial_noise_scale: 0.1
 

@@ -10,7 +10,7 @@ epsilon: ~
 discounting: ~
 reward_scaling: ~
 moving_average_window_size: ~
-softplus_sharpness_factor: ~ # higher beta make the softplus for the logit std fall of more sharply, with a Tanh activation function this means it increases possible -log(p)
+# softplus_sharpness_factor: ~ # higher beta make the softplus for the logit std fall of more sharply, with a Tanh activation function this means it increases possible -log(p)
 
 policy_loss_scale: ~
 value_loss_scale: ~

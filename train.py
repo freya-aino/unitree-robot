@@ -19,9 +19,9 @@ from torch import optim
 from sys import platform
 
 from unitree_robot.common.agents import PPOAgent
-from unitree_robot.training.environments import MujocoMjxEnv
+from unitree_robot.common.environments import MujocoMjxEnv
 from unitree_robot.common.datastructure import UnrollData
-from unitree_robot.training.experiments import Experiment, TestExperiment
+from unitree_robot.common.experiments import Experiment, TestExperiment
 
 
 
@@ -165,13 +165,18 @@ def main(cfg: DictConfig):
     agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
     environment = MujocoMjxEnv(**cfg.environment)
     optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
+    # optimizer = optim.SGD(agent.parameters(), **cfg.optimizer)
     experiment = TestExperiment(initial_mjx_data = environment.mjx_data_initial)
+    lr_scheduler = optim.lr_scheduler.ChainedScheduler([
+        optim.lr_scheduler.LinearLR(optimizer, **cfg.lr_scheduler.linear_lr_warmup),
+        optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **cfg.lr_scheduler.cosine_annealing_warm_restarts) 
+    ], optimizer=optimizer)
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- ENVIRONMENT INFO -----------")
 
     print(f"[INFO]: initial qpos: {environment.mjx_data_initial.qpos}")
-    print(f"[INFO]: simulation fps: mjx = {1 / environment.mjx_model.opt.timestep}; mj = {1 / environment.mj_model.opt.timestep}")
+    print(f"[INFO]: simulation timestep: mjx = {1 / environment.mjx_model.opt.timestep}; mj = {1 / environment.mj_model.opt.timestep}")
     print(f"[INFO]: ctrl range: {environment.mjx_model.actuator_ctrlrange.copy()}")
 
     # ----------------------------------------------------------------------------------------------------------------
@@ -208,39 +213,58 @@ def main(cfg: DictConfig):
         for e in range(train_epochs):
 
             # unroll step
-            mean_reward = 0.0
-            for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
+            with T.no_grad():
+                mean_reward = 0.0
+                for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
 
-                new_observation, reward, action, logits = unroll_step(
-                    agent=agent,
-                    environment=environment,
-                    mjx_data=mjx_data,
-                    observation=observation,
-                    experiment=experiment,
-                    device=device
-                )
-                unroll_data.update(
-                    unroll_step=i,
-                    observation=observation,
-                    action=action,
-                    logits=logits,
-                    reward=reward,
-                )
-                observation = new_observation
+                    new_observation, reward, action, logits = unroll_step(
+                        agent=agent,
+                        environment=environment,
+                        mjx_data=mjx_data,
+                        observation=observation,
+                        experiment=experiment,
+                        device=device
+                    )
+                    unroll_data.update(
+                        unroll_step=i,
+                        observation=observation,
+                        action=action,
+                        logits=logits,
+                        reward=reward,
+                    )
+                    observation = new_observation
 
-                mean_reward += reward.mean().detach().cpu().item() / cfg.training.unroll_length
+                    # print(f"unroll_data.action:       {unroll_data.actions.mean()}, {unroll_data.actions.min()}, {unroll_data.actions.max()}")
+                    # print(f"unroll_data.observations: {unroll_data.observations.mean()}, {unroll_data.observations.min()}, {unroll_data.observations.max()}")
+                    # print(f"unroll_data.logits:       {unroll_data.logits.mean()}, {unroll_data.logits.min()}, {unroll_data.logits.max()}")
+                    # print(f"unroll_data.rewards:      {unroll_data.rewards.mean()}, {unroll_data.rewards.min()}, {unroll_data.rewards.max()}")
+
+                    mean_reward += reward.mean().detach().cpu().item() / cfg.training.unroll_length
 
             # train step
+            agent.update_normalization(unroll_data.observations)
+            agent.train()
             assert unroll_data.validate(), "unroll data is not valid, some NaN or inf values found"
             with T.autograd.detect_anomaly():
                 loss, raw_losses = agent.train_step(unroll_data=unroll_data)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                lr_scheduler.step()
+
+            mlflow.log_metric("learning_rate", lr_scheduler.get_last_lr()[0], step=e)
 
             mlflow.log_metric("reward", mean_reward, step=e)
             mlflow.log_metric("loss", loss, step=e)
             mlflow.log_metrics(raw_losses, step=e)
+            mlflow.log_metric("reward_variance", unroll_data.rewards.var(1).mean().detach().item(), step=e)
+            mlflow.log_metric("action_variance", unroll_data.actions.var(1).mean().detach().item(), step=e)
+            mlflow.log_metric("logit_variance", unroll_data.logits.var(1).mean().detach().item(), step=e)
+            mlflow.log_metric("observation_variance", unroll_data.observations.var(1).mean().detach().item(), step=e)
+            mlflow.log_metric("action_mean", unroll_data.actions.mean(1).mean().detach().item(), step=e)
+            mlflow.log_metric("logit_mean", unroll_data.logits.mean(1).mean().detach().item(), step=e)
+            mlflow.log_metric("observation_mean", unroll_data.observations.mean(1).mean().detach().item(), step=e)
+
 
             # reset environment
             jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()

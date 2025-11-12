@@ -2,7 +2,5 @@ defaults:
   - default
   - _self_
 
-unroll_length: 500
-#minibatch_size: 500
-
-max_gradient_norm: 1.0
+unroll_length: 200
+max_gradient_norm: 5.0
