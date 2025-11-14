@@ -2439,15 +2439,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyrsmi"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a9/31/6e87ec76e658764939c3ed7879290ba8656ca745bebe2dd07d21e07005c0/pyrsmi-0.2.0.tar.gz", hash = "sha256:b5b934e6b10ffaf0612271b98d732c99b94cca773e6e86003b6e938a53bd688f", size = 31570, upload-time = "2024-09-25T01:05:43.908Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/4c/c1de90e392f422d34e4cde05947a46f2419a50e469533470d2e422696687/pyrsmi-0.2.0-py2.py3-none-any.whl", hash = "sha256:594388e5e0e916555d8b92b8b73e38aa73903a9d03ad89c172fefa187fc3ea41", size = 12250, upload-time = "2024-09-25T01:05:42.679Z" },
-]
-
-[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -3120,7 +3111,6 @@ dependencies = [
     { name = "mlflow" },
     { name = "mujoco-mjx" },
     { name = "nvidia-ml-py" },
-    { name = "pyrsmi" },
     { name = "torch" },
     { name = "tqdm" },
     { name = "warp-lang" },
@@ -3140,7 +3130,6 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.5.1" },
     { name = "mujoco-mjx", specifier = ">=3.3.7" },
     { name = "nvidia-ml-py", specifier = ">=13.580.82" },
-    { name = "pyrsmi", specifier = ">=0.2.0" },
     { name = "torch", specifier = ">=2.9.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "warp-lang", specifier = ">=1.10.0" },

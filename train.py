@@ -21,7 +21,7 @@ from sys import platform
 from unitree_robot.common.agents import PPOAgent
 from unitree_robot.common.environments import MujocoMjxEnv
 from unitree_robot.common.datastructure import UnrollData
-from unitree_robot.common.experiments import Experiment, TestExperiment
+from unitree_robot.common.experiments import MjxExperiment, Go2WalkingExperiment
 
 
 
@@ -68,7 +68,7 @@ def unroll_step(
     environment: MujocoMjxEnv,
     mjx_data: MjxData,
     observation: T.Tensor,
-    experiment: Experiment,
+    experiment: MjxExperiment,
     device: str
 ):
     with T.no_grad():
@@ -77,7 +77,7 @@ def unroll_step(
     next_observation, mjx_data = environment.step(action=F.tanh(action.squeeze()), mjx_data=mjx_data)
     next_observation = next_observation.unsqueeze(1)
 
-    reward = experiment(mjx_data).unsqueeze(1).unsqueeze(1).to(device=device)
+    reward = experiment.calculate_reward(mjx_data).unsqueeze(1).unsqueeze(1).to(device=device)
 
     return next_observation, reward, action, logits
 
@@ -164,13 +164,9 @@ def main(cfg: DictConfig):
     ).to(device=device, dtype=T.float32)
     agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
     environment = MujocoMjxEnv(**cfg.environment)
-    optimizer = optim.AdamW(agent.parameters(), **cfg.optimizer)
-    # optimizer = optim.SGD(agent.parameters(), **cfg.optimizer)
-    experiment = TestExperiment(initial_mjx_data = environment.mjx_data_initial)
-    lr_scheduler = optim.lr_scheduler.ChainedScheduler([
-        optim.lr_scheduler.LinearLR(optimizer, **cfg.lr_scheduler.linear_lr_warmup),
-        optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **cfg.lr_scheduler.cosine_annealing_warm_restarts) 
-    ], optimizer=optimizer)
+    optimizer = optim.Adam(agent.parameters(), **cfg.optimizer)
+    experiment = Go2WalkingExperiment(mjx_model = environment.mjx_model, **cfg.experiment)
+    lr_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **cfg.lr_scheduler)
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- ENVIRONMENT INFO -----------")
