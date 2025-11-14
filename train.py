@@ -79,7 +79,7 @@ def unroll_step(
 
     reward = experiment.calculate_reward(mjx_data).unsqueeze(1).unsqueeze(1).to(device=device)
 
-    return next_observation, reward, action, logits
+    return next_observation, reward, action, logits, mjx_data
 
 
 
@@ -197,7 +197,7 @@ def main(cfg: DictConfig):
     jax_seed = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
     observation, mjx_data = environment.reset(seed=jax_seed)
     observation = observation.unsqueeze(1)
-    observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
+    observation, _, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
     # run training
     with mlflow.start_run():
@@ -213,7 +213,7 @@ def main(cfg: DictConfig):
                 mean_reward = 0.0
                 for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
 
-                    new_observation, reward, action, logits = unroll_step(
+                    new_observation, reward, action, logits, mjx_data = unroll_step(
                         agent=agent,
                         environment=environment,
                         mjx_data=mjx_data,
@@ -266,7 +266,6 @@ def main(cfg: DictConfig):
             jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
             observation, mjx_data = environment.reset(seed=jax_seed)
             observation = observation.unsqueeze(1)
-            observation, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
 
 
 if __name__ == "__main__":
