@@ -58,3 +58,4 @@ mlruns
 outputs
 .ipynb_checkpoints
 .venv
+MUJOCO_LOG.TXT
