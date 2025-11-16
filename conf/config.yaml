@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - environment: go2-flat_terrain
+  - environment: go2-flat_terrain-menagerie
   - experiment: standing_up-v1
   - agent: ppo-v1
 
@@ -13,8 +13,8 @@ lr_scheduler:
 
 
 # environment settings
-sim_frames_per_step: 2
-mujoco_timestep: 0.005 # 0.0005 - 0.005
+sim_frames_per_step: 1
+mujoco_timestep: 0.002 # 0.0005 - 0.005
 
 # training settings
 total_timesteps: 8192 # 20e6
