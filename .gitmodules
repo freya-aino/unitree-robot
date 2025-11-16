@@ -1,3 +1,6 @@
 [submodule "external/unitree_mj_models"]
 	path = external/unitree_mj_models
 	url = git@github.com:freya-aino/unitree_mujoco_models.git
+[submodule "external/mujoco_menagerie"]
+	path = external/mujoco_menagerie
+	url = https://github.com/google-deepmind/mujoco_menagerie.git
