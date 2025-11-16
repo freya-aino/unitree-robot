@@ -1,9 +1,13 @@
+from copy import deepcopy
+
+import glfw
 import threading
 import time
 from os import path
 from typing import Tuple
 from functools import partial
 import jax
+import mujoco
 import mujoco.viewer as mjv
 import numpy as np
 import torch as T
@@ -14,6 +18,7 @@ import jax.numpy as npx
 from mujoco import MjData, MjModel, mjx, Renderer
 from mujoco.mjx import Data as MjxData
 from mujoco.mjx import Model as MjxModel
+import mujoco_viewer
 
 
 class MujocoMjxEnv:
@@ -47,38 +52,55 @@ class MujocoMjxEnv:
 
         # --- instantiate mjx model and data
         self.mjx_model = mjx.put_model(self.mj_model)
-        self.mjx_data_initial = mjx.put_data(self.mj_model, self.mj_data)
-        self.mjx_data_current = mjx.put_data(self.mj_model, self.mj_data)
+        self.mjx_data = self.reset(seed=0, initial_rest=True)
 
         # -- jit the step function for distribution
         self.jit_step = jax.jit(mjx.step)
-        # self.jit_forward = jax.jit(mjx.forward) # relevant for forward kinematics
 
         # -- set relevant control spaces, observation spaces and mujoco data
         self.action_ranges = self.mjx_model.actuator_ctrlrange.copy().astype(npx.float32)
 
     def _get_observations(self) -> T.Tensor:
-        obs = jax.numpy.concatenate([self.mjx_data_current.qpos.copy(), self.mjx_data_current.qvel.copy()], axis=-1, dtype=npx.float32)
-        return torch_dlpack.from_dlpack(obs)
+        obs = jax.numpy.concatenate([self.mjx_data.qpos.copy(), self.mjx_data.qvel.copy()], axis=-1)
+
+        print("observation np:", obs.min(), obs.max())
+
+        obs = torch_dlpack.from_dlpack(obs)
+
+        print("observation T :", obs.min(), obs.max())
+
+        return obs
 
     def step(self, action: T.Tensor) -> T.Tensor:
 
         assert (action.min() >= -1).all() and (action.max() <= 1).all(), "all action values must be between -1 and 1"
 
-        self.set_ctrl_(action)
+        mjx_data = self.set_ctrl_(action)
 
         for i in range(self.sim_frames_per_step):
-            self.mjx_data_current = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, self.mjx_data_current)
+            mjx_data = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, mjx_data)
+
+        self.mjx_data = mjx_data
+
+        # self.mj_data = mjx.get_data(self.mj_model, self.mjx_data)[0]
 
         return self._get_observations()
 
-    def reset(self, seed: int):
+    def reset(self, seed: int, initial_rest: bool = False):
+
+        # mujoco.mj_resetData(self.mj_model, self.mj_data)
+        mjx_data = mjx.put_data(self.mj_model, self.mj_data)
+        # mjx_data = mjx.make_data(self.mj_model)
 
         rng = jax.random.PRNGKey(seed)
         rng = jax.random.split(rng, self.num_parallel_environments)
-        self.mjx_data_current = jax.vmap(lambda r: self.mjx_data_initial.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data_initial.qpos.shape, dtype=npx.float32) * self.initial_noise_scale))(rng)
 
-        return self._get_observations()
+        if initial_rest:
+            return jax.vmap(lambda r: mjx_data.replace(qpos=jax.random.normal(key=r, shape=mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
+        else:
+            self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qpos=jax.random.normal(key=r, shape=mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
+            # self.mj_data = mjx.get_data(self.mj_model, self.mjx_data)[0]
+            return self._get_observations()
 
     def set_ctrl_(self, action: T.Tensor):
         # scale the input_magnitude by the number of sim steps per action step
@@ -89,8 +111,10 @@ class MujocoMjxEnv:
         scale = (self.action_ranges.max(axis=-1) - self.action_ranges.min(axis=-1)) / 2
         action = mean + action * scale
 
+        print("raw ctrl_signal", action.min(), action.max())
+
         # replace in mjx_data
-        self.mjx_data_current = self.mjx_data_current.replace(ctrl=action)
+        return self.mjx_data.replace(ctrl=action)
     
     def unroll_step(
         self,
@@ -105,7 +129,9 @@ class MujocoMjxEnv:
 
         action, logits = agent.get_action_and_logits(observation, eval=eval)
 
-        next_observation = self.step(action=F.tanh(action.squeeze()))
+        print(action.min(), action.max())
+
+        next_observation = self.step(action=agent.postprocess(action).squeeze())
 
         return next_observation, action, logits
 
@@ -143,41 +169,60 @@ class MjxRenderer:
         self.render_height = render_height
         self.render_fps = render_fps
 
-
         # "render_fps": int(np.round(1.0 / self.dt)), # TODO
-        self.mj_data = mjx.get_data(self.env.mj_model, self.env.mjx_data_initial)
-        self.viewer = mjv.launch_passive(
-            model=self.env.mj_model,
-            data=self.mj_data,
-        )
-        self.lock = threading.Lock()
-        self.end_viewer_event = threading.Event()
+        # self.mj_model = self.env.mj_model
+        # self.mj_data = mjx.get_data(self.mj_model, self.env.mjx_data_initial)
+        # self.lock = threading.Lock()
+        # self.end_viewer_event = threading.Event()
 
-    @staticmethod
-    def render_thread_(viewer, lock: threading.Lock, render_fps: int, end_viewer_event: threading.Event):
-        while viewer.is_running() and not end_viewer_event.is_set():
-            start_time = time.perf_counter()
-            lock.acquire()
-            viewer.sync()
-            lock.release()
-            time.sleep((time.perf_counter() - start_time) / render_fps)
+    # @staticmethod
+    # def render_thread_(mj_model, mj_data, lock: threading.Lock, render_fps: int, end_viewer_event: threading.Event):
+    #
+    #     glfw.init()
+    #     window = glfw.create_window(1920, 1080, "MjxRenderer", None, None)
+    #     glfw.make_context_current(window)
+    #
+    #     ctx = mujoco.MjrContext(mj_model, mujoco.mjtFontScale(1.0))
+    #
+    #     scene = mujoco.MjvScene(mj_model)
 
-    def start_viewer(self):
-        self.end_viewer_event.clear()
-        viewer_thread = threading.Thread(
-            target=self.render_thread_,
-            args=(self.viewer, self.lock, self.render_fps, self.end_viewer_event)
-        )
-        viewer_thread.start()
+        # while viewer.is_running() and not end_viewer_event.is_set():
+        # while glfw.window_should_close(window) and not end_viewer_event.is_set():
+        #     # start_time = time.perf_counter()
+        #     lock.acquire()
+        #
+        #     viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(window))
+        #     mujoco.mjr_render(viewport=viewport, scn=scene, con=ctx)
+        #
+        #     glfw.swap_buffers(window)
+        #     glfw.poll_events()
+        #
+        #     # viewer.sync()
+        #     lock.release()
+        #     time.sleep(1/render_fps)
 
-    def stop_viewer(self):
-        self.end_viewer_event.set()
+    # def start_viewer(self):
+    #     self.end_viewer_event.clear()
+    #     viewer_thread = threading.Thread(
+    #         target=self.render_thread_,
+    #         args=(self.env.mj_model, self.mj_data, self.lock, self.render_fps, self.end_viewer_event)
+    #     )
+    #     viewer_thread.start()
+    #
+    # def stop_viewer(self):
+    #     self.end_viewer_event.set()
 
-    def update(self):
-        self.lock.acquire()
-        self.mj_data = mjx.get_data(self.env.mj_model, self.env.mjx_data_current)[0]
-        self.lock.release()
-
+    # def render(self):
+    #     # mujoco.mj_step(self.mj_model, self.mj_data)
+    #     print("bevor1:", self.mj_data.qpos[:2])
+    #     self.mj_data = mjx.get_data(self.env.mj_model, self.env.mjx_data)[0]
+    #     print("bevor2:", self.mj_data.qpos[:2])
+    #     mujoco.mj_step(self.mj_model, self.mj_data)
+    #     print("after: ", self.mj_data.qpos[:2])
+    #     self.viewer.render()
+    #
+    # def close(self):
+    #     self.viewer.close()
 
 
 

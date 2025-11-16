@@ -11,6 +11,7 @@ unsetenv("WAYLAND_DISPLAY")
 environ["DISPLAY"] = ":0"
 environ["MESA_BACKEND"] = "glx"
 environ["GLFW_LIBDECOR"] = "0"
+environ["MUJOCO_GL"] = "egl"
 
 # -----------------------------------------------
 
@@ -25,6 +26,8 @@ import numpy as np
 import torch as T
 import torch.nn.functional as F
 import tqdm
+import mujoco
+import mujoco_viewer
 from omegaconf import DictConfig, OmegaConf
 from mujoco.mjx import Data as MjxData
 from flatten_dict import flatten
@@ -69,7 +72,7 @@ def unroll(
                 observation=observation,
             )
 
-            reward = experiment.calculate_reward(environment.mjx_data_current)
+            reward = experiment.calculate_reward(environment.mjx_data)
 
             unroll_data.update(
                 unroll_step=i,
@@ -123,7 +126,8 @@ def validate(
 ):
 
     if visualize:
-        renderer = MjxRenderer(environment, render_width=1920, render_height=1080, render_fps=60)
+        # renderer = mujoco.Renderer(environment.mj_model)
+        renderer = mujoco_viewer.MujocoViewer(model=environment.mj_model, data=environment.mj_data, width=1920, height=1080)
     else:
         renderer = None
 
@@ -136,9 +140,6 @@ def validate(
             jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
             observation = environment.reset(seed=jax_seed)
 
-            if renderer:
-                renderer.start_viewer()
-
             rewards = []
             for i in tqdm.tqdm(range(unroll_length), desc="Validating", position=1, leave=False):
 
@@ -148,13 +149,13 @@ def validate(
                     eval=True
                 )
 
-                reward = experiment.calculate_reward(environment.mjx_data_current)
+                reward = experiment.calculate_reward(environment.mjx_data)
                 rewards.append(reward.detach().cpu())
 
                 observation = new_observation
 
                 if renderer:
-                    renderer.update()
+                    renderer.render()
 
             mlflow.log_metric("validation_reward_mean", T.stack(rewards).mean().item(), step=batch)
             mlflow.log_metric("validation_reward_variance", T.stack(rewards).var().item(), step=batch)
@@ -163,7 +164,7 @@ def validate(
         raise e
     finally:
         if renderer:
-            renderer.stop_viewer()
+            renderer.close()
 
 
 
@@ -252,8 +253,7 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- ENVIRONMENT INFO -----------")
 
-    print(f"[INFO]: initial qpos: {environment.mjx_data_initial.qpos}")
-    print(f"[INFO]: simulation timestep: mjx = {1 / environment.mjx_model.opt.timestep}; mj = {1 / environment.mj_model.opt.timestep}")
+    print(f"[INFO]: simulation timestep: mjx = {environment.mjx_model.opt.timestep}; mj = {environment.mj_model.opt.timestep}")
     print(f"[INFO]: ctrl range: {environment.mjx_model.actuator_ctrlrange.copy()}")
 
     # ----------------------------------------------------------------------------------------------------------------
@@ -275,9 +275,10 @@ def main(cfg: DictConfig):
     reset_global_seed(random_seed)
 
     # reset environment and jit warmup
-    jax_seed = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
-    observation = environment.reset(seed=jax_seed)
-    environment.unroll_step(agent=agent, observation=observation)
+    with T.no_grad():
+        jax_seed = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
+        observation = environment.reset(seed=jax_seed)
+        environment.unroll_step(agent=agent, observation=observation)
 
     # run training
     with mlflow.start_run():
@@ -322,7 +323,7 @@ def main(cfg: DictConfig):
                     experiment=experiment,
                     unroll_length=cfg.batch_unroll_length,
                     batch=batch,
-                    visualize=True # TODO visualization always set to true for testing purposes
+                    visualize=False # TODO visualization always set for testing purposes
                 )
 
 

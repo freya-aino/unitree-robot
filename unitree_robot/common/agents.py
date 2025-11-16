@@ -134,6 +134,9 @@ class PPOAgentTorcRL(nn.Module):
         else:
             return action, logits
 
+    def postprocess(self, action):
+        return action
+
 
 class PPOAgent(nn.Module):
     """Standard PPO Agent with GAE and observation normalization."""
@@ -292,6 +295,8 @@ class PPOAgent(nn.Module):
             "entropy_loss": entropy_loss,
         })
 
+    def postprocess(self, action):
+        return F.tanh(action)
 
 # class PPOAgentGoogle(nn.Module):
 #   """Standard PPO Agent with GAE and observation normalization."""

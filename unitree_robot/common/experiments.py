@@ -105,6 +105,8 @@ class MjxExperiment:
         dist = np.abs(pos).mean(-1)
         return np.floor(dist).mean()
 
+    def body_part_variance(self, data: MjxData):
+        return np.var(data.xpos, axis=-1).mean()
 
 class Go2WalkingExperiment(MjxExperiment):
 
@@ -120,9 +122,10 @@ class Go2WalkingExperiment(MjxExperiment):
     def calculate_reward(self, data: MjxData):
         parsed_data = self.parse_mjx_data(data)
         reward = (
-                self.bodypart_height_reward(parsed_data, self.torso_name) * self.torso_height_reward_scale
-                + self.energy_reward(data) * self.energy_reward_scale
-                + self.torso_distance_from_origin_reward(parsed_data, self.torso_name) * self.torso_distance_from_origin_reward_scale
+            self.body_part_variance(data)
+                # self.bodypart_height_reward(parsed_data, self.torso_name) * self.torso_height_reward_scale
+                # + self.energy_reward(data) * self.energy_reward_scale
+                # + self.torso_distance_from_origin_reward(parsed_data, self.torso_name) * self.torso_distance_from_origin_reward_scale
         )
         return from_numpy(reward.__array__().copy()).unsqueeze(0)
 
