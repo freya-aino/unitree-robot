@@ -888,6 +888,19 @@ wheels = [
 ]
 
 [[package]]
+name = "imageio"
+version = "2.37.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/6f/606be632e37bf8d05b253e8626c2291d74c691ddc7bcdf7d6aaf33b32f6a/imageio-2.37.2.tar.gz", hash = "sha256:0212ef2727ac9caa5ca4b2c75ae89454312f440a756fcfc8ef1993e718f50f8a", size = 389600, upload-time = "2025-11-04T14:29:39.898Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/fe/301e0936b79bcab4cacc7548bf2853fc28dced0a578bab1f7ef53c9aa75b/imageio-2.37.2-py3-none-any.whl", hash = "sha256:ad9adfb20335d718c03de457358ed69f141021a333c40a53e57273d8a5bd0b9b", size = 317646, upload-time = "2025-11-04T14:29:37.948Z" },
+]
+
+[[package]]
 name = "importlib-metadata"
 version = "8.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1514,6 +1527,21 @@ wheels = [
 ]
 
 [[package]]
+name = "mediapy"
+version = "1.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ipython" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/a3/e92406a5552130085bc741861de2d02e1cc16f0615373e0a4cd0016de16d/mediapy-1.2.4.tar.gz", hash = "sha256:052947a676ebd3491359a6943b144559fdc414f741b03a05c78fa7b6291e6b12", size = 26659, upload-time = "2025-05-01T10:18:27.828Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/cb/9419149225b44d2cec12208430044c7310dd778d5348000ebb274bc3e2ce/mediapy-1.2.4-py3-none-any.whl", hash = "sha256:dd2b2364543077a1d292cab9eca5d08c8550521523aa1cbb721fd7617ccde872", size = 26118, upload-time = "2025-05-01T10:18:26.445Z" },
+]
+
+[[package]]
 name = "mistune"
 version = "3.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1672,6 +1700,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/26/28/3748ac7baf7cddd81af3e2296c85e6a83fab7318c845589670cee5c98a0e/mujoco_mjx-3.3.7.tar.gz", hash = "sha256:2bd1d07a7e3824c366a38f7335a29f321fc6e98e13cd1111c523858f74a31a3f", size = 6876211, upload-time = "2025-10-14T17:35:00.575Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/32/2aad9e9107fcc6dd6cc503e74ad78e2a6ed74a55cbc2498b3a5eac9104f0/mujoco_mjx-3.3.7-py3-none-any.whl", hash = "sha256:e56a7e979f4c23edabd7a422f9927968b5b7ef6382a07face9bdfc42006e8bb8", size = 6959457, upload-time = "2025-10-14T17:34:58.135Z" },
+]
+
+[[package]]
+name = "mujoco-python-viewer"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "glfw" },
+    { name = "imageio" },
+    { name = "mujoco" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/40/be/f27036bdd33156156f3e15975db4e5db8c57b115044d55b7bfaf81a1a4f9/mujoco-python-viewer-0.1.4.tar.gz", hash = "sha256:0602ffd47e14e84b90196e09f45bc353a6339dee069fdd70ebb0253913eb849d", size = 10185, upload-time = "2023-11-14T07:02:03.88Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/73/1b87b50091af38d86ada50d8fe3f294335f2d730aa1d124f4c714217fe60/mujoco_python_viewer-0.1.4-py3-none-any.whl", hash = "sha256:c1aa715a00420cb08ee9a2f696491f477952b336432f0b4b754b00d06e9b6b1e", size = 10271, upload-time = "2023-11-14T07:02:02.504Z" },
 ]
 
 [[package]]
@@ -3189,8 +3232,10 @@ dependencies = [
     { name = "jax", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "jax", marker = "sys_platform == 'win32'" },
     { name = "jax", extra = ["cuda13"], marker = "sys_platform == 'linux'" },
+    { name = "mediapy" },
     { name = "mlflow" },
     { name = "mujoco-mjx" },
+    { name = "mujoco-python-viewer" },
     { name = "nvidia-ml-py" },
     { name = "torch" },
     { name = "torchrl" },
@@ -3209,8 +3254,10 @@ requires-dist = [
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "jax", extras = ["cpu"], marker = "sys_platform == 'win32'" },
     { name = "jax", extras = ["cuda13"], marker = "sys_platform == 'linux'" },
+    { name = "mediapy", specifier = ">=1.2.4" },
     { name = "mlflow", specifier = ">=3.5.1" },
     { name = "mujoco-mjx", specifier = ">=3.3.7" },
+    { name = "mujoco-python-viewer", specifier = ">=0.1.4" },
     { name = "nvidia-ml-py", specifier = ">=13.580.82" },
     { name = "torch", specifier = ">=2.9.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchrl", specifier = ">=0.10.1" },

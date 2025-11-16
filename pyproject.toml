@@ -16,6 +16,8 @@ dependencies = [
     "flatten-dict>=0.4.2",
     "nvidia-ml-py>=13.580.82",
     "torchrl>=0.10.1",
+    "mujoco-python-viewer>=0.1.4",
+    "mediapy>=1.2.4",
 ]
 
 [tool.uv.sources]
