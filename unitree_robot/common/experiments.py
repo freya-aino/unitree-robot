@@ -37,6 +37,7 @@ class MjxExperiment:
 
     def __init__(self, mjx_model: MjxModel):
         self.mjx_model = mjx_model
+        # self.initial_mjx_data = self.parse_mjx_data(initial_mjx_data)
 
         self.actuator_name_dict = {self.get_name_by_idx(i): int(i) for i in mjx_model.name_actuatoradr}
         self.body_name_dict = {self.get_name_by_idx(i): int(i) for i in mjx_model.name_bodyadr}
@@ -86,10 +87,11 @@ class MjxExperiment:
             torso_z = parsed_data["body"]["xpos"][bodypart_name][:, -1]
         else:
             torso_z = parsed_data["body"]["xpos"][bodypart_name][-1]
+
         return torso_z.mean()
 
     def energy_reward(self, data: MjxData):
-        return -np.abs(data.actuator_force * data.ctrl).sum(-1).mean()
+        return -np.abs(data.actuator_force * data.ctrl).mean(-1).mean()
 
     # TODO
     # def bodypart_distance_reward(self, data: MjData) -> float:
@@ -100,7 +102,8 @@ class MjxExperiment:
 
     def torso_distance_from_origin_reward(self, parsed_data: dict, torso_name: str):
         pos = parsed_data["body"]["xpos"][torso_name][:, :2]
-        return np.sqrt((pos ** 2).sum(-1)).mean()
+        dist = np.abs(pos).mean(-1)
+        return np.floor(dist).mean()
 
 
 class Go2WalkingExperiment(MjxExperiment):
@@ -117,10 +120,9 @@ class Go2WalkingExperiment(MjxExperiment):
     def calculate_reward(self, data: MjxData):
         parsed_data = self.parse_mjx_data(data)
         reward = (
-                self.bodypart_height_reward(parsed_data, self.torso_name) * self.torso_height_reward_scale +
-                self.energy_reward(data) * self.energy_reward_scale +
-                self.torso_distance_from_origin_reward(parsed_data,
-                                                       self.torso_name) * self.torso_distance_from_origin_reward_scale
+                self.bodypart_height_reward(parsed_data, self.torso_name) * self.torso_height_reward_scale
+                + self.energy_reward(data) * self.energy_reward_scale
+                + self.torso_distance_from_origin_reward(parsed_data, self.torso_name) * self.torso_distance_from_origin_reward_scale
         )
         return from_numpy(reward.__array__().copy()).unsqueeze(0)
 

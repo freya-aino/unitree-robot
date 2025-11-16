@@ -1,14 +1,17 @@
+import threading
+import time
 from os import path
 from typing import Tuple
 from functools import partial
 import jax
+import mujoco.viewer as mjv
 import numpy as np
 import torch as T
 import torch.nn.functional as F
 import torch.utils.dlpack as torch_dlpack
 import jax.dlpack as jax_dlpack
 import jax.numpy as npx
-from mujoco import MjData, MjModel, mjx
+from mujoco import MjData, MjModel, mjx, Renderer
 from mujoco.mjx import Data as MjxData
 from mujoco.mjx import Model as MjxModel
 
@@ -45,6 +48,7 @@ class MujocoMjxEnv:
         # --- instantiate mjx model and data
         self.mjx_model = mjx.put_model(self.mj_model)
         self.mjx_data_initial = mjx.put_data(self.mj_model, self.mj_data)
+        self.mjx_data_current = mjx.put_data(self.mj_model, self.mj_data)
 
         # -- jit the step function for distribution
         self.jit_step = jax.jit(mjx.step)
@@ -53,33 +57,30 @@ class MujocoMjxEnv:
         # -- set relevant control spaces, observation spaces and mujoco data
         self.action_ranges = self.mjx_model.actuator_ctrlrange.copy().astype(npx.float32)
 
-
-    @staticmethod
-    def _get_observations(mjx_data: MjxData) -> T.Tensor:
-        obs = jax.numpy.concatenate([mjx_data.qpos.copy(), mjx_data.qvel.copy()], axis=-1, dtype=npx.float32)
+    def _get_observations(self) -> T.Tensor:
+        obs = jax.numpy.concatenate([self.mjx_data_current.qpos.copy(), self.mjx_data_current.qvel.copy()], axis=-1, dtype=npx.float32)
         return torch_dlpack.from_dlpack(obs)
 
-    def step(self, action: T.Tensor, mjx_data: MjxData) -> Tuple[T.Tensor, MjxData]:
+    def step(self, action: T.Tensor) -> T.Tensor:
 
         assert (action.min() >= -1).all() and (action.max() <= 1).all(), "all action values must be between -1 and 1"
 
-        mjx_data = self.set_ctrl_(mjx_data, action)
+        self.set_ctrl_(action)
 
         for i in range(self.sim_frames_per_step):
-            mjx_data = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, mjx_data)
-            # mjx_data = jax.vmap(self.jit_forward, in_axes=(None, 0))(self.mjx_model, mjx_data) # relevant for forward kinematics
+            self.mjx_data_current = jax.vmap(self.jit_step, in_axes=(None, 0))(self.mjx_model, self.mjx_data_current)
 
-        return self._get_observations(mjx_data), mjx_data
+        return self._get_observations()
 
     def reset(self, seed: int):
 
         rng = jax.random.PRNGKey(seed)
         rng = jax.random.split(rng, self.num_parallel_environments)
-        mjx_data = jax.vmap(lambda r: self.mjx_data_initial.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data_initial.qpos.shape, dtype=npx.float32) * self.initial_noise_scale))(rng)
+        self.mjx_data_current = jax.vmap(lambda r: self.mjx_data_initial.replace(qpos=jax.random.normal(key=r, shape=self.mjx_data_initial.qpos.shape, dtype=npx.float32) * self.initial_noise_scale))(rng)
 
-        return self._get_observations(mjx_data), mjx_data
+        return self._get_observations()
 
-    def set_ctrl_(self, mjx_data: MjxData, action: T.Tensor) -> MjxData:
+    def set_ctrl_(self, action: T.Tensor):
         # scale the input_magnitude by the number of sim steps per action step
         action = jax_dlpack.from_dlpack(action.detach()) / self.sim_frames_per_step
 
@@ -89,7 +90,25 @@ class MujocoMjxEnv:
         action = mean + action * scale
 
         # replace in mjx_data
-        return mjx_data.replace(ctrl=action)
+        self.mjx_data_current = self.mjx_data_current.replace(ctrl=action)
+    
+    def unroll_step(
+        self,
+        agent: T.nn.Module,
+        observation: T.Tensor,
+        eval: bool = False
+    ):
+        if observation.ndim == 1:
+            observation = observation.unsqueeze(0)
+        if observation.ndim == 2:
+            observation = observation.unsqueeze(1)
+
+        action, logits = agent.get_action_and_logits(observation, eval=eval)
+
+        next_observation = self.step(action=F.tanh(action.squeeze()))
+
+        return next_observation, action, logits
+
     
     # TODO: change to mjx_data OR make a seperate reset, step function for mj_data for testing purposes and create a seperate mjc_data version of this function
     # @staticmethod
@@ -106,6 +125,61 @@ class MujocoMjxEnv:
     #         "qfrc_passive_abs_sum": np.abs(mj_data.qfrc_passive).sum(),
     #         "qfrc_constraint_abs_sum": np.abs(mj_data.qfrc_constraint).sum(),
     #     }
+
+
+class MjxRenderer:
+
+    def __init__(
+        self,
+        mjx_env: MujocoMjxEnv,
+        render_width: int,
+        render_height: int,
+        render_fps: int
+    ):
+
+        self.env = mjx_env
+
+        self.render_width = render_width
+        self.render_height = render_height
+        self.render_fps = render_fps
+
+
+        # "render_fps": int(np.round(1.0 / self.dt)), # TODO
+        self.mj_data = mjx.get_data(self.env.mj_model, self.env.mjx_data_initial)
+        self.viewer = mjv.launch_passive(
+            model=self.env.mj_model,
+            data=self.mj_data,
+        )
+        self.lock = threading.Lock()
+        self.end_viewer_event = threading.Event()
+
+    @staticmethod
+    def render_thread_(viewer, lock: threading.Lock, render_fps: int, end_viewer_event: threading.Event):
+        while viewer.is_running() and not end_viewer_event.is_set():
+            start_time = time.perf_counter()
+            lock.acquire()
+            viewer.sync()
+            lock.release()
+            time.sleep((time.perf_counter() - start_time) / render_fps)
+
+    def start_viewer(self):
+        self.end_viewer_event.clear()
+        viewer_thread = threading.Thread(
+            target=self.render_thread_,
+            args=(self.viewer, self.lock, self.render_fps, self.end_viewer_event)
+        )
+        viewer_thread.start()
+
+    def stop_viewer(self):
+        self.end_viewer_event.set()
+
+    def update(self):
+        self.lock.acquire()
+        self.mj_data = mjx.get_data(self.env.mj_model, self.env.mjx_data_current)[0]
+        self.lock.release()
+
+
+
 
 
 # class MujocoEnv(gym.Env):

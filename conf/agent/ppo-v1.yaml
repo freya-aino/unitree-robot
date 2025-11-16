@@ -2,14 +2,14 @@ defaults:
   - default
   - _self_
 
-network_hidden_size: 16
-num_hidden_layers: 0
+network_hidden_size: 128
+num_hidden_layers: 1
 lambda_: 0.99
 epsilon: 0.3
 discounting: 0.97
 reward_scaling: 0.1
 moving_average_window_size: 16
 
-policy_loss_scale: 1
+policy_loss_scale: 1.0
 value_loss_scale: 0.5
 entropy_loss_scale: 1e-2

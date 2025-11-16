@@ -1,6 +1,0 @@
-defaults:
-  - default
-  - _self_
-
-unroll_length: 200
-max_gradient_norm: 5.0

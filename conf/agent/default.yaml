@@ -1,6 +1,6 @@
 observation_size: ${environment.observation_size}
 action_size: ${environment.action_size}
-train_sequence_length: ${training.unroll_length}
+train_sequence_length: ${batch_unroll_length} # TODO: this could be a minibatch
 
 network_hidden_size: ~
 num_hidden_layers: ~

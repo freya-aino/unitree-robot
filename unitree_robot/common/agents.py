@@ -6,7 +6,133 @@ from torch.distributions.normal import Normal
 from torch.nn.parameter import Parameter
 from unitree_robot.common.datastructure import UnrollData
 from unitree_robot.common.networks import BasicPolicyValueNetwork
+from unitree_robot.common.util import logits_to_normal, jacobian_entropy, jacobian_log_prob
 
+from tensordict.nn import TensorDictModule
+from tensordict.nn.distributions import NormalParamExtractor
+from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
+from torchrl.objectives.value import GAE
+from torchrl.objectives import ClipPPOLoss
+
+class PPOAgentTorcRL(nn.Module):
+
+    def __init__(
+        self,
+        observation_size: int,
+        action_size: int,
+        network_hidden_size: int,
+        num_hidden_layers: int,
+        discounting: float,
+        lambda_: float,
+        epsilon: float,
+        moving_average_window_size: int,
+        reward_scaling: float,
+        train_sequence_length: int,
+        policy_loss_scale: float,
+        value_loss_scale: float,
+        entropy_loss_scale: float,
+    ):
+        super(PPOAgentTorcRL, self).__init__()
+
+        network = BasicPolicyValueNetwork(
+            input_size=observation_size,
+            value_output_size=1,
+            policy_output_size=action_size * 2,
+            num_hidden_layers=num_hidden_layers,
+            hidden_size=network_hidden_size,
+        )
+
+        value_module = ValueOperator(
+            module=network.value_network,
+            in_keys=["observation"],
+        )
+
+        policy_module_ = TensorDictModule(
+            nn.Sequential(
+                network.policy_network,
+                NormalParamExtractor()
+            ),
+            in_keys=["observation"],
+            out_keys=["loc", "scale"]
+        )
+
+        policy_module = ProbabilisticActor(
+            module=policy_module_,
+            in_keys=["loc", "scale"],
+            out_keys=["action"],
+            distribution_class=TanhNormal,
+            distribution_kwargs={
+                "low": -1.0,
+                "high": 1.0
+            },
+            return_log_prob=True,
+        )
+
+        self.gae = GAE(
+            gamma=discounting,
+            lmbda=lambda_,
+            value_network=value_module,
+            differentiable=False,
+            average_gae=True
+        )
+
+        self.loss_module = ClipPPOLoss(
+            actor_network=policy_module,
+            critic_network=value_module,
+            clip_epsilon=epsilon,
+            entropy_coeff=entropy_loss_scale,
+            critic_coeff=value_loss_scale,
+            loss_critic_type="smooth_l1",
+        )
+
+        self.running_mean = nn.Parameter(T.zeros(observation_size), requires_grad=False)
+        self.running_variance = nn.Parameter(T.ones(observation_size), requires_grad=False)
+        self.num_steps = nn.Parameter(T.tensor(0.0), requires_grad=False)
+
+    def update_normalization(self, observation):
+        self.num_steps += observation.shape[0] * observation.shape[1]
+        input_to_old_mean = observation - self.running_mean
+        mean_diff = T.sum(input_to_old_mean / self.num_steps, dim=(0, 1))
+        self.running_mean[:] = self.running_mean + mean_diff
+        input_to_new_mean = observation - self.running_mean
+        var_diff = T.sum(input_to_new_mean * input_to_old_mean, dim=(0, 1))
+        self.running_variance[:] = self.running_variance + var_diff
+
+    def normalize(self, observation):
+        variance = self.running_variance / (self.num_steps + 1.0)
+        variance = T.clip(variance, 1e-6, 1e6)
+        return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
+
+    def train_step(self, unroll_data: UnrollData):
+
+        data = unroll_data.as_tensor_dict()
+
+        with T.no_grad():
+            data = self.loss_module.actor_network(data)
+            data = self.gae(data)
+
+        out = self.loss_module(data)
+
+        return (
+            out["loss_objective"]
+            + out["loss_critic"]
+            + out["loss_entropy"]
+        ,
+            {
+                "policy_loss": out["loss_objective"],
+                "value_loss": out["loss_critic"],
+                "entropy_loss": out["loss_entropy"],
+            }
+        )
+
+    def get_action_and_logits(self, observation: T.Tensor, eval: bool = False):
+        loc, scale, action, log_prob = self.loss_module.actor_network(observation)
+        logits = T.cat([loc, scale], -1)
+
+        if eval:
+            return loc, logits
+        else:
+            return action, logits
 
 
 class PPOAgent(nn.Module):
@@ -80,60 +206,40 @@ class PPOAgent(nn.Module):
         return ((observation - self.running_mean) / variance.sqrt()).clip(-5, 5)
 
     def create_distribution(self, logits: T.Tensor):
-        loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)
-        scale = T.clip(F.softplus(scale), 0.01, 2.0)
-        return Normal(
-            loc=loc,
-            scale=scale + 0.001,
-        )
+        return logits_to_normal(logits)
         # return Normal(
         #     loc=loc,
         #     scale=0.001 # TODO for simulating a real world discrete control signal
         # )
 
-    def get_action_and_logits(self, observation: T.Tensor):
+    def get_action_and_logits(self, observation: T.Tensor, eval: bool = False):
         observation = self.normalize(observation)
         logits = self.network.policy_forward(observation)
         dist = self.create_distribution(logits)
         action = dist.rsample()
-        return action, logits
 
-    @staticmethod
-    def jacobian_entropy(dist: Normal):
-        log_normalized = 0.5 * math.log(2 * math.pi) + T.log(dist.scale)
-        entropy = 0.5 + log_normalized
-        entropy = entropy * T.ones_like(dist.loc)
-        sample = dist.rsample()
-        # entropy = dist.entropy()
-        jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
-        return (entropy + jacobian).sum(-1)
-
-    @staticmethod
-    def jacobian_log_prob(dist: Normal, sample: T.Tensor):
-        log_unnormalized = -0.5 * ((sample - dist.loc) / dist.scale).square()
-        log_normalized = 0.5 * math.log(2 * math.pi) + T.log(dist.scale)
-        # log_p = dist.log_prob(sample)
-        jacobian = 2 * (math.log(2) - sample - F.softplus(-2 * sample))
-        # return (log_p - jacobian).sum(dim=-1).mean(dim=0)
-        return (log_unnormalized - log_normalized - jacobian).sum(dim=-1).mean()
+        if eval:
+            return dist.loc, logits
+        else:
+            return action, logits
 
     def train_step(self, unroll_data: UnrollData):
         observations = self.normalize(unroll_data.observations)
         logits = unroll_data.logits
         actions = unroll_data.actions
-        rewards = unroll_data.rewards
+        rewards = unroll_data.rewards * self.reward_scaling
 
-        # moving average rewards
-        rewards = F.avg_pool1d(
-            rewards.transpose(1, 2),
-            stride=1,
-            kernel_size=self.moving_average_window_size,
-            padding=self.moving_average_window_size // 2
-        ).transpose(1, 2)[:, :-1, :]
+        # # moving average rewards
+        # rewards = F.avg_pool1d(
+        #     rewards.transpose(1, 2),
+        #     stride=1,
+        #     kernel_size=self.moving_average_window_size,
+        #     padding=self.moving_average_window_size // 2
+        # ).transpose(1, 2)[:, :-1, :]
 
-        # normalize rewards
-        std, mu = T.std_mean(rewards, dim=1, keepdim=True)
-        rewards = (rewards - mu) / std
+        # # normalize rewards
+        # std, mu = T.std_mean(rewards, dim=1, keepdim=True)
+        # rewards = (rewards - mu) / std
 
         # compute policy logits and values
         policy_logits = self.network.policy_forward(observations)
@@ -149,9 +255,9 @@ class PPOAgent(nn.Module):
         logits = logits[:, :-1]
 
         behaviour_dist = self.create_distribution(logits)
-        behaviour_action_log_probs = self.jacobian_log_prob(behaviour_dist, actions)
+        behaviour_action_log_probs = jacobian_log_prob(behaviour_dist, actions)
         policy_dist = self.create_distribution(policy_logits)
-        policy_action_log_probs = self.jacobian_log_prob(policy_dist, actions)
+        policy_action_log_probs = jacobian_log_prob(policy_dist, actions)
 
         # compute GAE
         with T.no_grad():
@@ -171,10 +277,10 @@ class PPOAgent(nn.Module):
         policy_loss = -T.mean(T.minimum(surrogate_loss1, surrogate_loss2))
 
         # Value function loss
-        value_loss = ((vs_t - values_t) ** 2).mean(dim=-1).mean()
+        value_loss = F.smooth_l1_loss(vs_t, values_t).mean()
 
         # Entropy loss
-        entropy_loss = -self.jacobian_entropy(policy_dist).mean()
+        entropy_loss = -jacobian_entropy(policy_dist).mean()
 
         return (
             policy_loss * self.policy_loss_scale

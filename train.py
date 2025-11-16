@@ -1,6 +1,19 @@
+from os import environ, unsetenv
 
+# set xla flags for some GPUs
+xla_flags = environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+environ["XLA_FLAGS"] = xla_flags
+environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+
+# set render variable
+unsetenv("WAYLAND_DISPLAY")
+environ["DISPLAY"] = ":0"
+environ["MESA_BACKEND"] = "glx"
+environ["GLFW_LIBDECOR"] = "0"
 
 # -----------------------------------------------
+
 
 import time
 import random
@@ -18,8 +31,8 @@ from flatten_dict import flatten
 from torch import optim
 from sys import platform
 
-from unitree_robot.common.agents import PPOAgent
-from unitree_robot.common.environments import MujocoMjxEnv
+from unitree_robot.common.agents import PPOAgent, PPOAgentTorcRL
+from unitree_robot.common.environments import MujocoMjxEnv, MjxRenderer
 from unitree_robot.common.datastructure import UnrollData
 from unitree_robot.common.experiments import MjxExperiment, Go2WalkingExperiment
 
@@ -33,53 +46,124 @@ def reset_global_seed(seed: int):
     np.random.seed(seed)
 
 
-def render(render_fps: int):
-
-    # # print(env.action_space)
-    # env.reset()
-    # try:
-    #     for i in range(1000):
-    #         # print(env.get_state_vector())
-    #         t_start = time.perf_counter()
-
-    #         action = np.random.uniform(-1, 1, size=env.action_space.shape).astype(
-    #             np.float32
-    #         )
-    #         env.do_simulation(ctrl=action, n_frames=5)
-
-    #         env.render()
-
-    #         elapsed = time.perf_counter() - t_start
-    #         target = 1.0 / render_fps
-    #         if elapsed < target:
-    #             time.sleep(target - elapsed)
-
-    #         print(f"effective fps: {1.0 / (time.perf_counter() - t_start)}")
-
-    # except Exception as e:
-    #     raise e
-    # finally:
-    #     env.close()
-
-    raise NotImplementedError
-
-def unroll_step(
-    agent: PPOAgent,
+def unroll(
+    agent: T.nn.Module,
     environment: MujocoMjxEnv,
-    mjx_data: MjxData,
-    observation: T.Tensor,
     experiment: MjxExperiment,
-    device: str
+    unroll_data: UnrollData,
 ):
+    
+    agent = agent.eval()
+    
     with T.no_grad():
-        action, logits = agent.get_action_and_logits(observation)
 
-    next_observation, mjx_data = environment.step(action=F.tanh(action.squeeze()), mjx_data=mjx_data)
-    next_observation = next_observation.unsqueeze(1)
+        # reset environment
+        jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
+        observation = environment.reset(seed=jax_seed)
 
-    reward = experiment.calculate_reward(mjx_data).unsqueeze(1).unsqueeze(1).to(device=device)
+        # unroll step
+        for i in tqdm.tqdm(range(unroll_data.observations.shape[1]), desc="Unrolling", position=1, leave=False):
 
-    return next_observation, reward, action, logits, mjx_data
+            new_observation, action, logits = environment.unroll_step(
+                agent=agent,
+                observation=observation,
+            )
+
+            reward = experiment.calculate_reward(environment.mjx_data_current)
+
+            unroll_data.update(
+                unroll_step=i,
+                observation=observation,
+                action=action,
+                logits=logits,
+                reward=reward,
+            )
+
+            observation = new_observation
+
+    return unroll_data
+
+def train(
+    agent: T.nn.Module,
+    unroll_data: UnrollData,
+    epochs: int,
+    optimizer: T.optim.Optimizer,
+    lr_scheduler: T.optim.lr_scheduler,
+    grad_clip_norm: float,
+    batch: int
+):
+
+    assert unroll_data.validate(), "unroll data is not valid, some NaN or inf values found"
+    
+    agent = agent.train()
+    agent.update_normalization(unroll_data.observations)
+
+    with T.autograd.detect_anomaly():
+        for e in tqdm.tqdm(range(epochs), desc="Training", position=1, leave=False):
+            loss, raw_losses = agent.train_step(unroll_data=unroll_data)
+
+            optimizer.zero_grad()
+            loss.backward()
+            T.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=grad_clip_norm)
+            optimizer.step()
+            lr_scheduler.step()
+
+            mlflow.log_metric("learning_rate", lr_scheduler.get_last_lr()[0], step=(epochs*batch)+e)
+            mlflow.log_metric("loss", loss, step=(epochs*batch)+e)
+            mlflow.log_metrics(raw_losses, step=(epochs*batch)+e)
+
+
+def validate(
+    agent: T.nn.Module,
+    environment: MujocoMjxEnv,
+    experiment: MjxExperiment,
+    unroll_length: int,
+    batch: int,
+    visualize: bool = False
+):
+
+    if visualize:
+        renderer = MjxRenderer(environment, render_width=1920, render_height=1080, render_fps=60)
+    else:
+        renderer = None
+
+    agent = agent.eval()
+
+    try:
+        with T.no_grad():
+
+            # reset environment
+            jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
+            observation = environment.reset(seed=jax_seed)
+
+            if renderer:
+                renderer.start_viewer()
+
+            rewards = []
+            for i in tqdm.tqdm(range(unroll_length), desc="Validating", position=1, leave=False):
+
+                new_observation, _, _ = environment.unroll_step(
+                    agent=agent,
+                    observation=observation,
+                    eval=True
+                )
+
+                reward = experiment.calculate_reward(environment.mjx_data_current)
+                rewards.append(reward.detach().cpu())
+
+                observation = new_observation
+
+                if renderer:
+                    renderer.update()
+
+            mlflow.log_metric("validation_reward_mean", T.stack(rewards).mean().item(), step=batch)
+            mlflow.log_metric("validation_reward_variance", T.stack(rewards).var().item(), step=batch)
+
+    except Exception as e:
+        raise e
+    finally:
+        if renderer:
+            renderer.stop_viewer()
 
 
 
@@ -95,13 +179,7 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- SYSTEM VARIABLES -----------")
 
-    from os import environ
-
     # set xla flags for some GPUs
-    xla_flags = environ.get("XLA_FLAGS", "")
-    xla_flags += " --xla_gpu_triton_gemm_any=True"
-    environ["XLA_FLAGS"] = xla_flags
-    environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
     environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = f"{cfg.xla_gpu_memory_fraction}"
 
     print(f"[INFO]: XLA_FLAGS={environ['XLA_FLAGS']}")
@@ -117,7 +195,9 @@ def main(cfg: DictConfig):
 
     device = cfg.device if platform != "win32" else "cpu"
     random_seed = cfg.random_seed
-    train_epochs = cfg.training.train_epochs
+    total_batches = int(cfg.total_timesteps // (cfg.num_parallel_environments * cfg.batch_unroll_length))
+
+    print(f"[INFO]: total number of batches: {total_batches}")
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- INITIALIZE RANDOM GENERATORS -----------")
@@ -158,14 +238,15 @@ def main(cfg: DictConfig):
 
     unroll_data = UnrollData(
         num_unrolls=cfg.environment.num_parallel_environments,
-        unroll_length=cfg.training.unroll_length,
+        unroll_length=cfg.batch_unroll_length,
         observation_size=cfg.environment.observation_size,
         action_size=cfg.environment.action_size,
     ).to(device=device, dtype=T.float32)
-    agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
+    # agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
+    agent = PPOAgentTorcRL(**cfg.agent).to(device=device, dtype=T.float32)
     environment = MujocoMjxEnv(**cfg.environment)
-    optimizer = optim.Adam(agent.parameters(), **cfg.optimizer)
     experiment = Go2WalkingExperiment(mjx_model = environment.mjx_model, **cfg.experiment)
+    optimizer = optim.Adam(agent.parameters(), **cfg.optimizer)
     lr_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **cfg.lr_scheduler)
 
     # ----------------------------------------------------------------------------------------------------------------
@@ -195,9 +276,8 @@ def main(cfg: DictConfig):
 
     # reset environment and jit warmup
     jax_seed = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
-    observation, mjx_data = environment.reset(seed=jax_seed)
-    observation = observation.unsqueeze(1)
-    observation, _, _, _, _ = unroll_step(agent=agent, environment=environment, mjx_data=mjx_data, observation=observation, experiment=experiment, device=device)
+    observation = environment.reset(seed=jax_seed)
+    environment.unroll_step(agent=agent, observation=observation)
 
     # run training
     with mlflow.start_run():
@@ -205,67 +285,45 @@ def main(cfg: DictConfig):
         # log params
         mlflow.log_params(flatten(cfg, reducer="dot"))
 
-        # training loop
-        for e in range(train_epochs):
+
+        for batch in tqdm.tqdm(range(total_batches), desc="Batches", position=0):
 
             # unroll step
-            with T.no_grad():
-                mean_reward = 0.0
-                for i in tqdm.tqdm(range(cfg.training.unroll_length), desc="Unrolling"):
+            unroll_data = unroll(
+                agent=agent,
+                environment=environment,
+                experiment=experiment,
+                unroll_data=unroll_data,
+            )
 
-                    new_observation, reward, action, logits, mjx_data = unroll_step(
-                        agent=agent,
-                        environment=environment,
-                        mjx_data=mjx_data,
-                        observation=observation,
-                        experiment=experiment,
-                        device=device
-                    )
-                    unroll_data.update(
-                        unroll_step=i,
-                        observation=observation,
-                        action=action,
-                        logits=logits,
-                        reward=reward,
-                    )
-                    observation = new_observation
+            mlflow.log_metric("reward_mean", unroll_data.rewards.mean(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("reward_variance", unroll_data.rewards.var(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("action_variance", unroll_data.actions.var(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("logit_variance", unroll_data.logits.var(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("observation_variance", unroll_data.observations.var(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("action_mean", unroll_data.actions.mean(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("logit_mean", unroll_data.logits.mean(1).mean().detach().item(), step=batch)
+            mlflow.log_metric("observation_mean", unroll_data.observations.mean(1).mean().detach().item(), step=batch)
 
-                    # print(f"unroll_data.action:       {unroll_data.actions.mean()}, {unroll_data.actions.min()}, {unroll_data.actions.max()}")
-                    # print(f"unroll_data.observations: {unroll_data.observations.mean()}, {unroll_data.observations.min()}, {unroll_data.observations.max()}")
-                    # print(f"unroll_data.logits:       {unroll_data.logits.mean()}, {unroll_data.logits.min()}, {unroll_data.logits.max()}")
-                    # print(f"unroll_data.rewards:      {unroll_data.rewards.mean()}, {unroll_data.rewards.min()}, {unroll_data.rewards.max()}")
+            train(
+                agent=agent,
+                unroll_data=unroll_data,
+                epochs=cfg.train_epochs_per_batch,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                grad_clip_norm=cfg.max_gradient_norm,
+                batch=batch,
+            )
 
-                    mean_reward += reward.mean().detach().cpu().item() / cfg.training.unroll_length
-
-            # train step
-            agent.update_normalization(unroll_data.observations)
-            agent.train()
-            assert unroll_data.validate(), "unroll data is not valid, some NaN or inf values found"
-            with T.autograd.detect_anomaly():
-                loss, raw_losses = agent.train_step(unroll_data=unroll_data)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                lr_scheduler.step()
-
-            mlflow.log_metric("learning_rate", lr_scheduler.get_last_lr()[0], step=e)
-
-            mlflow.log_metric("reward", mean_reward, step=e)
-            mlflow.log_metric("loss", loss, step=e)
-            mlflow.log_metrics(raw_losses, step=e)
-            mlflow.log_metric("reward_variance", unroll_data.rewards.var(1).mean().detach().item(), step=e)
-            mlflow.log_metric("action_variance", unroll_data.actions.var(1).mean().detach().item(), step=e)
-            mlflow.log_metric("logit_variance", unroll_data.logits.var(1).mean().detach().item(), step=e)
-            mlflow.log_metric("observation_variance", unroll_data.observations.var(1).mean().detach().item(), step=e)
-            mlflow.log_metric("action_mean", unroll_data.actions.mean(1).mean().detach().item(), step=e)
-            mlflow.log_metric("logit_mean", unroll_data.logits.mean(1).mean().detach().item(), step=e)
-            mlflow.log_metric("observation_mean", unroll_data.observations.mean(1).mean().detach().item(), step=e)
-
-
-            # reset environment
-            jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
-            observation, mjx_data = environment.reset(seed=jax_seed)
-            observation = observation.unsqueeze(1)
+            if batch % cfg.validation_interval == 0:
+                validate(
+                    agent=agent,
+                    environment=environment,
+                    experiment=experiment,
+                    unroll_length=cfg.batch_unroll_length,
+                    batch=batch,
+                    visualize=True # TODO visualization always set to true for testing purposes
+                )
 
 
 if __name__ == "__main__":
