@@ -11,7 +11,7 @@ unsetenv("WAYLAND_DISPLAY")
 environ["DISPLAY"] = ":0"
 environ["MESA_BACKEND"] = "glx"
 environ["GLFW_LIBDECOR"] = "0"
-environ["MUJOCO_GL"] = "egl"
+# environ["MUJOCO_GL"] = "egl"
 
 # -----------------------------------------------
 
@@ -243,8 +243,8 @@ def main(cfg: DictConfig):
         observation_size=cfg.environment.observation_size,
         action_size=cfg.environment.action_size,
     ).to(device=device, dtype=T.float32)
-    # agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
-    agent = PPOAgentTorcRL(**cfg.agent).to(device=device, dtype=T.float32)
+    agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
+    # agent = PPOAgentTorcRL(**cfg.agent).to(device=device, dtype=T.float32)
     environment = MujocoMjxEnv(**cfg.environment)
     experiment = Go2WalkingExperiment(mjx_model = environment.mjx_model, **cfg.experiment)
     optimizer = optim.Adam(agent.parameters(), **cfg.optimizer)
@@ -305,6 +305,8 @@ def main(cfg: DictConfig):
             mlflow.log_metric("action_mean", unroll_data.actions.mean(1).mean().detach().item(), step=batch)
             mlflow.log_metric("logit_mean", unroll_data.logits.mean(1).mean().detach().item(), step=batch)
             mlflow.log_metric("observation_mean", unroll_data.observations.mean(1).mean().detach().item(), step=batch)
+
+
 
             train(
                 agent=agent,

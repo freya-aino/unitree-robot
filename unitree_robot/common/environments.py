@@ -63,12 +63,9 @@ class MujocoMjxEnv:
     def _get_observations(self) -> T.Tensor:
         obs = jax.numpy.concatenate([self.mjx_data.qpos.copy(), self.mjx_data.qvel.copy()], axis=-1)
 
-        print("observation np:", obs.min(), obs.max())
+        assert (~np.isnan(obs)).all(), f"observation has shape {obs.shape} and has {np.isnan(obs).sum()} nan values !"
 
         obs = torch_dlpack.from_dlpack(obs)
-
-        print("observation T :", obs.min(), obs.max())
-
         return obs
 
     def step(self, action: T.Tensor) -> T.Tensor:
@@ -111,8 +108,6 @@ class MujocoMjxEnv:
         scale = (self.action_ranges.max(axis=-1) - self.action_ranges.min(axis=-1)) / 2
         action = mean + action * scale
 
-        print("raw ctrl_signal", action.min(), action.max())
-
         # replace in mjx_data
         return self.mjx_data.replace(ctrl=action)
     
@@ -129,7 +124,7 @@ class MujocoMjxEnv:
 
         action, logits = agent.get_action_and_logits(observation, eval=eval)
 
-        print(action.min(), action.max())
+        # print(action.min(), action.max())
 
         next_observation = self.step(action=agent.postprocess(action).squeeze())
 

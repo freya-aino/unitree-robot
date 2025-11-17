@@ -105,6 +105,8 @@ class PPOAgentTorcRL(nn.Module):
 
     def train_step(self, unroll_data: UnrollData):
 
+        unroll_data.observations[:] = self.normalize(unroll_data.observations)
+
         data = unroll_data.as_tensor_dict()
 
         with T.no_grad():
