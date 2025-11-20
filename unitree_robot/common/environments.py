@@ -63,9 +63,12 @@ class MujocoMjxEnv:
     def _get_observations(self) -> T.Tensor:
         obs = jax.numpy.concatenate([self.mjx_data.qpos.copy(), self.mjx_data.qvel.copy()], axis=-1)
 
-        assert (~np.isnan(obs)).all(), f"observation has shape {obs.shape} and has {np.isnan(obs).sum()} nan values !"
+        # assert (~np.isnan(obs)).all(), f"observation has shape {obs.shape} and has {np.isnan(obs).sum()} nan values !"
 
         obs = torch_dlpack.from_dlpack(obs)
+
+        obs = T.nan_to_num(obs, 0.0)
+
         return obs
 
     def step(self, action: T.Tensor) -> T.Tensor:

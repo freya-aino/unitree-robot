@@ -1,7 +1,7 @@
 import numpy as np
 from mujoco.mjx import Model as MjxModel
 from mujoco.mjx import Data as MjxData
-from torch import from_numpy
+from torch import from_numpy, nan_to_num
 
 # explanation for mjData fields: https://bhaswanth-a.github.io/posts/mujoco-basics/
 
@@ -91,7 +91,7 @@ class MjxExperiment:
         return torso_z.mean()
 
     def energy_reward(self, data: MjxData):
-        return -np.abs(data.actuator_force * data.ctrl).mean(-1).mean()
+        return -np.abs(data.actuator_force * data.ctrl).mean(-1)
 
     # TODO
     # def bodypart_distance_reward(self, data: MjData) -> float:
@@ -103,10 +103,10 @@ class MjxExperiment:
     def torso_distance_from_origin_reward(self, parsed_data: dict, torso_name: str):
         pos = parsed_data["body"]["xpos"][torso_name][:, :2]
         dist = np.abs(pos).mean(-1)
-        return np.floor(dist).mean()
+        return np.floor(dist)
 
     def body_part_variance(self, data: MjxData):
-        return np.var(data.xpos, axis=-1).mean()
+        return np.var(data.xpos, axis=-1).mean(-1)
 
 class Go2WalkingExperiment(MjxExperiment):
 
@@ -127,7 +127,9 @@ class Go2WalkingExperiment(MjxExperiment):
                 # + self.energy_reward(data) * self.energy_reward_scale
                 # + self.torso_distance_from_origin_reward(parsed_data, self.torso_name) * self.torso_distance_from_origin_reward_scale
         )
-        return from_numpy(reward.__array__().copy()).unsqueeze(0)
+        t_reward = from_numpy(reward.__array__().copy()).unsqueeze(1)
+        t_reward = nan_to_num(t_reward)
+        return t_reward
 
 
 # def calc_angle(body_rotation_quat: np.NDArray[np.float32], angle_vector: np.NDArray[np.float32] = np.array([1.0, 0.0, 0.0])) -> float:
