@@ -18,7 +18,6 @@ import jax.numpy as npx
 from mujoco import MjData, MjModel, mjx, Renderer
 from mujoco.mjx import Data as MjxData
 from mujoco.mjx import Model as MjxModel
-import mujoco_viewer
 
 
 class MujocoMjxEnv:

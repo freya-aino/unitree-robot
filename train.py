@@ -27,7 +27,7 @@ import torch as T
 import torch.nn.functional as F
 import tqdm
 import mujoco
-import mujoco_viewer
+# import mujoco_viewer
 from omegaconf import DictConfig, OmegaConf
 from mujoco.mjx import Data as MjxData
 from flatten_dict import flatten
@@ -125,11 +125,11 @@ def validate(
     visualize: bool = False
 ):
 
-    if visualize:
-        # renderer = mujoco.Renderer(environment.mj_model)
-        renderer = mujoco_viewer.MujocoViewer(model=environment.mj_model, data=environment.mj_data, width=1920, height=1080)
-    else:
-        renderer = None
+    # if visualize:
+    #     # renderer = mujoco.Renderer(environment.mj_model)
+    #     renderer = mujoco_viewer.MujocoViewer(model=environment.mj_model, data=environment.mj_data, width=1920, height=1080)
+    # else:
+    #     renderer = None
 
     agent = agent.eval()
 
@@ -154,17 +154,17 @@ def validate(
 
                 observation = new_observation
 
-                if renderer:
-                    renderer.render()
+                # if renderer:
+                #     renderer.render()
 
             mlflow.log_metric("validation_reward_mean", T.stack(rewards).mean().item(), step=batch)
             mlflow.log_metric("validation_reward_variance", T.stack(rewards).var().item(), step=batch)
 
     except Exception as e:
         raise e
-    finally:
-        if renderer:
-            renderer.close()
+    # finally:
+    #     if renderer:
+    #         renderer.close()
 
 
 
