@@ -34,10 +34,10 @@ from flatten_dict import flatten
 from torch import optim
 from sys import platform
 
-from unitree_robot.common.agents import PPOAgent, PPOAgentTorcRL
-from unitree_robot.common.environments import MujocoMjxEnv, MjxRenderer
-from unitree_robot.common.datastructure import UnrollData
-from unitree_robot.common.experiments import MjxExperiment, Go2WalkingExperiment
+from src.common.agents import PPOAgent, PPOAgentTorcRL
+from src.common.environments import MujocoMjxEnv, MjxRenderer
+from src.common.datastructure import UnrollData
+from src.common.experiments import MjxExperiment, Go2WalkingExperiment
 
 
 
@@ -258,6 +258,9 @@ def main(cfg: DictConfig):
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- MLFLOW SETUP -----------")
+
+    if cfg.mlflow_tracking_uri:
+        mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
 
     # set experiment
     if not mlflow.get_experiment_by_name(cfg.experiment_name):

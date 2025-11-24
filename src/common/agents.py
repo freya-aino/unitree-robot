@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.nn.parameter import Parameter
-from unitree_robot.common.datastructure import UnrollData
-from unitree_robot.common.networks import BasicPolicyValueNetwork
-from unitree_robot.common.util import logits_to_normal, jacobian_entropy, jacobian_log_prob
+from src.common.datastructure import UnrollData
+from src.common.networks import BasicPolicyValueNetwork
+from src.common.util import logits_to_normal, jacobian_entropy, jacobian_log_prob
 
 from tensordict.nn import TensorDictModule
 from tensordict.nn.distributions import NormalParamExtractor

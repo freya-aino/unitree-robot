@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from torch.utils.data import Dataset
 import numpy as np
 
-from unitree_robot.common.util import logits_to_normal
+from src.common.util import logits_to_normal
 
 class UnrollData(nn.Module):
 

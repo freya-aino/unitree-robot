@@ -13,10 +13,10 @@ from mujoco import MjData
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from unitree_robot.common.agents import PPOAgent
-from unitree_robot.common.datastructure import UnrollData
-from unitree_robot.common.environments import MujocoEnv
-from unitree_robot.common.experiments import Experiment
+from src.common.agents import PPOAgent
+from src.common.datastructure import UnrollData
+from src.common.environments import MujocoEnv
+from src.common.experiments import Experiment
 
 
 
