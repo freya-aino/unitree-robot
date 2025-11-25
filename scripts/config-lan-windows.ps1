@@ -1,0 +1,1 @@
+New-NetIPAddress -InterfaceAlias "Ethernet 2" -IPAddress 192.168.123.201 -PrefixLength 24
