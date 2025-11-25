@@ -16,6 +16,7 @@ environ["GLFW_LIBDECOR"] = "0"
 # -----------------------------------------------
 
 
+import logging
 import time
 import random
 import warnings
@@ -176,6 +177,11 @@ def main(cfg: DictConfig):
 
     OmegaConf.resolve(cfg)
     print(OmegaConf.to_yaml(cfg))
+
+    logging.basicConfig(level=logging.WARNING)          # affects all modules
+    # or, only affect mlflow’s own logger:
+    logging.getLogger("mlflow").setLevel(logging.WARNING)
+    logging.getLogger("azure").setLevel(logging.WARNING)
 
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- SYSTEM VARIABLES -----------")
