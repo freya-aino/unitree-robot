@@ -39,7 +39,7 @@ from src.common.agents import PPOAgent, PPOAgentTorcRL
 from src.common.environments import MujocoMjxEnv, MjxRenderer
 from src.common.datastructure import UnrollData
 from src.common.experiments import MjxExperiment, Go2WalkingExperiment
-
+from src.common.util import get_mlflow_tracking_uri
 
 
 # -----------------------------------------------
@@ -267,6 +267,8 @@ def main(cfg: DictConfig):
 
     if cfg.mlflow_tracking_uri:
         mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
+    else:
+        mlflow.set_tracking_uri(get_mlflow_tracking_uri())
 
     # set experiment
     if not mlflow.get_experiment_by_name(cfg.experiment_name):

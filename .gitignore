@@ -60,3 +60,4 @@ outputs
 .venv
 MUJOCO_LOG.TXT
 mlflow.db
+config.json

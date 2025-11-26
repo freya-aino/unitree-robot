@@ -4,6 +4,32 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torchrl.modules import TanhNormal
 
+from azure.ai.ml import MLClient
+from azure.identity import DefaultAzureCredential
+import json
+
+def get_mlflow_tracking_uri():
+
+    with open("./config.json", "r") as f:
+        config = json.load(f)
+
+    # Enter information about your Azure Machine Learning workspace.
+    subscription_id = config["subscription_id"]
+    resource_group = config["resource_group"]
+    workspace_name = config["workspace_name"]
+
+    ml_client = MLClient(credential=DefaultAzureCredential(),
+                            subscription_id=subscription_id,
+                            resource_group_name=resource_group,
+                            workspace_name=workspace_name)
+
+    tracking_uri = ml_client.workspaces.get(ml_client.workspace_name).mlflow_tracking_uri
+
+    assert tracking_uri, "tracking uri is None"
+
+    return tracking_uri
+
+
 
 def logits_to_normal(logits: T.Tensor, beta: float = 1.0) -> Normal:
     loc, scale = T.split(logits, logits.shape[-1] // 2, dim=-1)

@@ -22,7 +22,7 @@ batch_unroll_length: 500
 # a "batch" is total_timesteps / (num_parallel_environments * batch_unroll_length)
 train_epochs_per_batch: 10 # number of epochs per batch of data
 
-mlflow_tracking_uri: "sqlite:///mlflow.db"
+mlflow_tracking_uri: ~ # "sqlite:///mlflow.db"
 
 device: "cuda" # "cpu" or "cuda"
 max_gradient_norm: 1.0 # gradients are clipped to this value to avoid large updates
