@@ -1,3 +1,4 @@
+import os
 import math
 import torch as T
 import torch.nn.functional as F
@@ -8,7 +9,10 @@ from azure.ai.ml import MLClient
 from azure.identity import DefaultAzureCredential
 import json
 
-def get_mlflow_tracking_uri():
+
+def get_azureml_mlflow_tracking_uri():
+
+    assert os.path.exists("./config.json"), "config.json file not found in project root"
 
     with open("./config.json", "r") as f:
         config = json.load(f)

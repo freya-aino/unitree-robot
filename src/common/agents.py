@@ -137,7 +137,7 @@ class PPOAgentTorcRL(nn.Module):
             return action, logits
 
     def postprocess(self, action):
-        return action
+        return action.clip(-1, 1)
 
 
 class PPOAgent(nn.Module):

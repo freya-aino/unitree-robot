@@ -60,49 +60,55 @@ class MjxExperiment:
     def get_name_by_idx(self, idx: int):
         return self.mjx_model.names[idx:].split(b'\x00')[0].decode("utf-8")
 
-    def parse_mjx_data(self, mjx_data: MjxData):
-        return {
-            "actuator": {
-                "act": dict(zip(self.actuator_name_dict, mjx_data.act)),
-                "act_dot": dict(zip(self.actuator_name_dict, mjx_data.act_dot)),
-                "force": dict(zip(self.actuator_name_dict, mjx_data.actuator_force)),
-            },
-            "body": {
-                "xpos": dict(zip(self.body_name_dict, mjx_data.xpos)),
-                "xquat": dict(zip(self.body_name_dict, mjx_data.xquat)),
-            },
-            "geom": {
-                # dict(zip(self.body_name_dict, mjx_data.geom_xpos)),
-                # dict(zip(self.body_name_dict, mjx_data.geom_xmat)),
-                # TODO
-            },
-        }
+    # def parse_mjx_data(self, mjx_data: MjxData):
+    #     return {
+    #         "actuator": {
+    #             "act": dict(zip(self.actuator_name_dict, mjx_data.act)),
+    #             "act_dot": dict(zip(self.actuator_name_dict, mjx_data.act_dot)),
+    #             "force": dict(zip(self.actuator_name_dict, mjx_data.actuator_force)),
+    #         },
+    #         "body": {
+    #             "xpos": dict(zip(self.body_name_dict, mjx_data.xpos)),
+    #             "xquat": dict(zip(self.body_name_dict, mjx_data.xquat)),
+    #         },
+    #         "geom": {
+    #             # dict(zip(self.body_name_dict, mjx_data.geom_xpos)),
+    #             # dict(zip(self.body_name_dict, mjx_data.geom_xmat)),
+    #             # TODO
+    #         },
+    #     }
 
     def calculate_reward(self, data: MjxData):
         raise NotImplementedError
 
-    def bodypart_height_reward(self, parsed_data: dict, bodypart_name: str):
-        num_dims = len(parsed_data["body"]["xpos"][bodypart_name].shape)
-        if num_dims > 1:
-            torso_z = parsed_data["body"]["xpos"][bodypart_name][:, -1]
-        else:
-            torso_z = parsed_data["body"]["xpos"][bodypart_name][-1]
+    # def bodypart_height_reward(self, parsed_data: dict, bodypart_name: str):
 
-        return torso_z.mean()
+    #     # num_dims = len(parsed_data["body"]["xpos"][bodypart_name].shape)
+    #     # if num_dims > 1:
+    #     torso_z = parsed_data["body"]["xpos"][bodypart_name][:, -1]
+    #     # else:
+    #         # torso_z = parsed_data["body"]["xpos"][bodypart_name][-1]
+
+    #     print(f'torso_z: {parsed_data["body"]["xpos"][bodypart_name].shape}')
+
+    #     return torso_z
+
+    def bodypart_height_reward(self, data: MjxData, bodypart_id: int):
+        return data.xpos[:, bodypart_id, 2]
 
     def energy_reward(self, data: MjxData):
         return -np.abs(data.actuator_force * data.ctrl).mean(-1)
 
     # TODO
     # def bodypart_distance_reward(self, data: MjData) -> float:
-    #     from_positions = np.stack([data.body(n).xpos for n in self.body_names_from])
+    #     from_positions = np.stack([dxata.body(n).xpos for n in self.body_names_from])
     #     to_positions = np.stack([data.body(n).xpos for n in self.body_names_to])
     #     dist = np.mean(np.abs(from_positions.mean(axis=0) - to_positions.mean(axis=0)))
     #     return super().__call__(dist)
 
-    def torso_distance_from_origin_reward(self, parsed_data: dict, torso_name: str):
-        pos = parsed_data["body"]["xpos"][torso_name][:, :2]
-        dist = np.abs(pos).mean(-1)
+    def torso_distance_from_origin_reward(self, data: MjxData, torso_id: int):
+        xy_pos = data.xpos[:, torso_id, :2]
+        dist = np.abs(xy_pos).mean(-1)
         return np.floor(dist)
 
     def body_part_variance(self, data: MjxData):
@@ -120,15 +126,16 @@ class Go2WalkingExperiment(MjxExperiment):
         super().__init__(mjx_model=mjx_model)
 
     def calculate_reward(self, data: MjxData):
-        parsed_data = self.parse_mjx_data(data)
+
+        torso_id = self.body_name_dict[self.torso_name]
+
         reward = (
-            self.body_part_variance(data)
-                # self.bodypart_height_reward(parsed_data, self.torso_name) * self.torso_height_reward_scale
-                # + self.energy_reward(data) * self.energy_reward_scale
-                # + self.torso_distance_from_origin_reward(parsed_data, self.torso_name) * self.torso_distance_from_origin_reward_scale
+            # self.body_part_variance(data) +
+            self.bodypart_height_reward(data, torso_id) * self.torso_height_reward_scale
+            + self.energy_reward(data) * self.energy_reward_scale
+            + self.torso_distance_from_origin_reward(data, torso_id) * self.torso_distance_from_origin_reward_scale
         )
         t_reward = from_numpy(reward.__array__().copy()).unsqueeze(1)
-        t_reward = nan_to_num(t_reward)
         return t_reward
 
 

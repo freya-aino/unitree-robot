@@ -46,8 +46,7 @@ class MujocoMjxEnv:
 
         # -- set mujoco model parameter
         self.mj_model.opt.timestep = mujoco_timestep # INFO - currently there is no reason to switch this on, so default is just "safer"
-
-        self.mj_data = MjData(self.mj_model)
+        # self.mj_data = MjData(self.mj_model)
 
         # --- instantiate mjx model and data
         self.mjx_model = mjx.put_model(self.mj_model)
@@ -58,21 +57,20 @@ class MujocoMjxEnv:
 
         # -- set relevant control spaces, observation spaces and mujoco data
         self.action_ranges = self.mjx_model.actuator_ctrlrange.copy().astype(npx.float32)
-
+ 
     def _get_observations(self) -> T.Tensor:
         obs = jax.numpy.concatenate([self.mjx_data.qpos.copy(), self.mjx_data.qvel.copy()], axis=-1)
 
         # assert (~np.isnan(obs)).all(), f"observation has shape {obs.shape} and has {np.isnan(obs).sum()} nan values !"
 
+        # obs = np.ascontiguousarray(obs)
         obs = torch_dlpack.from_dlpack(obs)
-
-        obs = T.nan_to_num(obs, 0.0)
 
         return obs
 
     def step(self, action: T.Tensor) -> T.Tensor:
 
-        assert (action.min() >= -1).all() and (action.max() <= 1).all(), "all action values must be between -1 and 1"
+        assert (action.min() >= -1).all() and (action.max() <= 1).all(), f"all action values must be between -1 and 1, got min: {action.min()}, max: {action.max()}"
 
         mjx_data = self.set_ctrl_(action)
 
@@ -88,22 +86,28 @@ class MujocoMjxEnv:
     def reset(self, seed: int, initial_rest: bool = False):
 
         # mujoco.mj_resetData(self.mj_model, self.mj_data)
-        mjx_data = mjx.put_data(self.mj_model, self.mj_data)
         # mjx_data = mjx.make_data(self.mj_model)
+        mj_data = MjData(self.mj_model)
+        mjx_data = mjx.put_data(self.mj_model, mj_data)
 
         rng = jax.random.PRNGKey(seed)
         rng = jax.random.split(rng, self.num_parallel_environments)
 
         if initial_rest:
-            return jax.vmap(lambda r: mjx_data.replace(qpos=jax.random.normal(key=r, shape=mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
+            return jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.normal(r, shape=(mj_data.qvel.shape)) * self.initial_noise_scale))(rng)
+            # return jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.uniform(key=r, shape=mjx_data.qvel.shape) * self.initial_noise_scale))(rng)
+            # return jax.vmap(lambda r: mjx_data)(rng)
         else:
-            self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qpos=jax.random.normal(key=r, shape=mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
+            self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.normal(r, shape=(mj_data.qvel.shape)) * self.initial_noise_scale))(rng)
+            # self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.uniform(key=r, shape=mjx_data.qvel.shape) * self.initial_noise_scale))(rng)
+            # self.mjx_data = jax.vmap(lambda r: mjx_data)(rng)
             # self.mj_data = mjx.get_data(self.mj_model, self.mjx_data)[0]
             return self._get_observations()
 
     def set_ctrl_(self, action: T.Tensor):
         # scale the input_magnitude by the number of sim steps per action step
-        action = jax_dlpack.from_dlpack(action.detach()) / self.sim_frames_per_step
+        action = action.contiguous().detach()
+        action = jax_dlpack.from_dlpack(action) / self.sim_frames_per_step
 
         # scale the input by the available ctrl range
         mean = self.action_ranges.mean(axis=-1)
@@ -126,9 +130,12 @@ class MujocoMjxEnv:
 
         action, logits = agent.get_action_and_logits(observation, eval=eval)
 
-        # print(action.min(), action.max())
+        assert T.isnan(action).any() == False, "action input has nan values !"
 
-        next_observation = self.step(action=agent.postprocess(action).squeeze())
+        action = agent.postprocess(action).contiguous().squeeze()
+        next_observation = self.step(action=action)
+
+        assert T.isnan(next_observation).any() == False, "observation output has nan values !"
 
         return next_observation, action, logits
 

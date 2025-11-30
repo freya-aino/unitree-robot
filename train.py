@@ -27,19 +27,16 @@ import numpy as np
 import torch as T
 import torch.nn.functional as F
 import tqdm
-import mujoco
-# import mujoco_viewer
 from omegaconf import DictConfig, OmegaConf
-from mujoco.mjx import Data as MjxData
 from flatten_dict import flatten
 from torch import optim
 from sys import platform
 
 from src.common.agents import PPOAgent, PPOAgentTorcRL
-from src.common.environments import MujocoMjxEnv, MjxRenderer
+from src.common.environments import MujocoMjxEnv
 from src.common.datastructure import UnrollData
 from src.common.experiments import MjxExperiment, Go2WalkingExperiment
-from src.common.util import get_mlflow_tracking_uri
+from src.common.util import get_azureml_mlflow_tracking_uri
 
 
 # -----------------------------------------------
@@ -102,19 +99,18 @@ def train(
     agent = agent.train()
     agent.update_normalization(unroll_data.observations)
 
-    with T.autograd.detect_anomaly():
-        for e in tqdm.tqdm(range(epochs), desc="Training", position=1, leave=False):
-            loss, raw_losses = agent.train_step(unroll_data=unroll_data)
+    for e in tqdm.tqdm(range(epochs), desc="Training", position=1, leave=False):
+        loss, raw_losses = agent.train_step(unroll_data=unroll_data)
 
-            optimizer.zero_grad()
-            loss.backward()
-            T.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=grad_clip_norm)
-            optimizer.step()
-            lr_scheduler.step()
+        optimizer.zero_grad()
+        loss.backward()
+        T.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=grad_clip_norm)
+        optimizer.step()
+        lr_scheduler.step()
 
-            mlflow.log_metric("learning_rate", lr_scheduler.get_last_lr()[0], step=(epochs*batch)+e)
-            mlflow.log_metric("loss", loss, step=(epochs*batch)+e)
-            mlflow.log_metrics(raw_losses, step=(epochs*batch)+e)
+        mlflow.log_metric("learning_rate", lr_scheduler.get_last_lr()[0], step=(epochs*batch)+e)
+        mlflow.log_metric("loss", loss, step=(epochs*batch)+e)
+        mlflow.log_metrics(raw_losses, step=(epochs*batch)+e)
 
 
 def validate(
@@ -123,49 +119,32 @@ def validate(
     experiment: MjxExperiment,
     unroll_length: int,
     batch: int,
-    visualize: bool = False
 ):
-
-    # if visualize:
-    #     # renderer = mujoco.Renderer(environment.mj_model)
-    #     renderer = mujoco_viewer.MujocoViewer(model=environment.mj_model, data=environment.mj_data, width=1920, height=1080)
-    # else:
-    #     renderer = None
 
     agent = agent.eval()
 
-    try:
-        with T.no_grad():
+    with T.no_grad():
 
-            # reset environment
-            jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
-            observation = environment.reset(seed=jax_seed)
+        # reset environment
+        jax_seed = T.randint(low=0, high=2 ** 32, size=[1], dtype=T.uint32).item()
+        observation = environment.reset(seed=jax_seed)
 
-            rewards = []
-            for i in tqdm.tqdm(range(unroll_length), desc="Validating", position=1, leave=False):
+        rewards = []
+        for i in tqdm.tqdm(range(unroll_length), desc="Validating", position=1, leave=False):
 
-                new_observation, _, _ = environment.unroll_step(
-                    agent=agent,
-                    observation=observation,
-                    eval=True
-                )
+            new_observation, _, _ = environment.unroll_step(
+                agent=agent,
+                observation=observation,
+                eval=True
+            )
 
-                reward = experiment.calculate_reward(environment.mjx_data)
-                rewards.append(reward.detach().cpu())
+            reward = experiment.calculate_reward(environment.mjx_data)
+            rewards.append(reward.detach().cpu())
 
-                observation = new_observation
+            observation = new_observation
 
-                # if renderer:
-                #     renderer.render()
-
-            mlflow.log_metric("validation_reward_mean", T.stack(rewards).mean().item(), step=batch)
-            mlflow.log_metric("validation_reward_variance", T.stack(rewards).var().item(), step=batch)
-
-    except Exception as e:
-        raise e
-    # finally:
-    #     if renderer:
-    #         renderer.close()
+        mlflow.log_metric("validation_reward_mean", T.stack(rewards).mean().item(), step=batch)
+        mlflow.log_metric("validation_reward_variance", T.stack(rewards).var().item(), step=batch)
 
 
 
@@ -178,7 +157,7 @@ def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     print(OmegaConf.to_yaml(cfg))
 
-    logging.basicConfig(level=logging.WARNING)          # affects all modules
+    logging.basicConfig(level=logging.WARNING) # affects all modules
     # or, only affect mlflow’s own logger:
     logging.getLogger("mlflow").setLevel(logging.WARNING)
     logging.getLogger("azure").setLevel(logging.WARNING)
@@ -207,23 +186,6 @@ def main(cfg: DictConfig):
     print(f"[INFO]: total number of batches: {total_batches}")
 
     # ----------------------------------------------------------------------------------------------------------------
-    print("----------- INITIALIZE RANDOM GENERATORS -----------")
-
-    # sanity check seed setting
-    reset_global_seed(random_seed)
-    t_seed_a = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
-    np_seed_a = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
-    reset_global_seed(random_seed)
-    t_seed_b = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
-    np_seed_b = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
-    print(f"torch seed: {t_seed_a} == {t_seed_b}")
-    print(f"numpy seed: {np_seed_a} == {np_seed_b}")
-
-    # set cudnn for reproducibility
-    T.backends.cudnn.deterministic = True
-    T.backends.cudnn.benchmark = False
-
-    # ----------------------------------------------------------------------------------------------------------------
     print("----------- CONFIGURING JAX -----------")
 
     # TODO: set jax cuda memory allocation percentage
@@ -241,6 +203,23 @@ def main(cfg: DictConfig):
     print(f"jax backend: {jax.default_backend()}")
 
     # ----------------------------------------------------------------------------------------------------------------
+    print("----------- INITIALIZE RANDOM GENERATORS -----------")
+
+    # sanity check seed setting
+    reset_global_seed(random_seed)
+    t_seed_a = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
+    np_seed_a = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
+    reset_global_seed(random_seed)
+    t_seed_b = T.randint(low=0, high=2**32, size=[1], dtype=T.uint32).item()
+    np_seed_b = np.random.randint(low=0, high=2**32, size=[1], dtype=np.uint32).item()
+    print(f"torch seed: {t_seed_a} == {t_seed_b}")
+    print(f"numpy seed: {np_seed_a} == {np_seed_b}")
+
+    # set cudnn for reproducibility
+    T.backends.cudnn.deterministic = True
+    T.backends.cudnn.benchmark = False
+
+    # ----------------------------------------------------------------------------------------------------------------
     print("----------- SETUP ENVIRONMENT, AGENT, EXPERIMENT AND UNROLL DATA -----------")
 
     unroll_data = UnrollData(
@@ -249,8 +228,8 @@ def main(cfg: DictConfig):
         observation_size=cfg.environment.observation_size,
         action_size=cfg.environment.action_size,
     ).to(device=device, dtype=T.float32)
-    agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
-    # agent = PPOAgentTorcRL(**cfg.agent).to(device=device, dtype=T.float32)
+    # agent = PPOAgent(**cfg.agent).to(device=device, dtype=T.float32)
+    agent = PPOAgentTorcRL(**cfg.agent).to(device=device, dtype=T.float32)
     environment = MujocoMjxEnv(**cfg.environment)
     experiment = Go2WalkingExperiment(mjx_model = environment.mjx_model, **cfg.experiment)
     optimizer = optim.Adam(agent.parameters(), **cfg.optimizer)
@@ -265,10 +244,10 @@ def main(cfg: DictConfig):
     # ----------------------------------------------------------------------------------------------------------------
     print("----------- MLFLOW SETUP -----------")
 
-    if cfg.mlflow_tracking_uri:
-        mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
+    if cfg.mlflow_tracking_uri == "azureml":
+        mlflow.set_tracking_uri(get_azureml_mlflow_tracking_uri())
     else:
-        mlflow.set_tracking_uri(get_mlflow_tracking_uri())
+        mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
 
     # set experiment
     if not mlflow.get_experiment_by_name(cfg.experiment_name):
@@ -336,7 +315,6 @@ def main(cfg: DictConfig):
                     experiment=experiment,
                     unroll_length=cfg.batch_unroll_length,
                     batch=batch,
-                    visualize=False # TODO visualization always set for testing purposes
                 )
 
 
