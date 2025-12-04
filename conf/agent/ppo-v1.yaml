@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 network_hidden_size: 128
-num_hidden_layers: 1
+num_hidden_layers: 0
 lambda_: 0.99
 epsilon: 0.25
 discounting: 0.99

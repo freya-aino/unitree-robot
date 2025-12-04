@@ -223,7 +223,7 @@ class PPOAgent(nn.Module):
 
     def get_action_and_logits(self, observation: T.Tensor, eval: bool = False):
         observation = self.normalize(observation)
-        logits = self.network.policy_forward(observation)
+        logits = self.network(observation)
         dist = self.create_distribution(logits)
         action = dist.rsample()
 
@@ -251,7 +251,7 @@ class PPOAgent(nn.Module):
         # rewards = (rewards - mu) / std
 
         # compute policy logits and values
-        policy_logits = self.network.policy_forward(observations)
+        policy_logits = self.network(observations)
         values = self.network.value_forward(observations)
 
         # format the individual sequences

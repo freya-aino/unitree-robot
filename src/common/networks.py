@@ -61,3 +61,6 @@ class BasicPolicyValueNetwork(nn.Module):
 
     def value_forward(self, x: T.Tensor) -> T.Tensor:
         return self.value_network(x)
+
+    def forward(self, x: T.Tensor) -> T.Tensor:
+        return self.policy_forward(x)
