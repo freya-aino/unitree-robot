@@ -61,3 +61,4 @@ outputs
 MUJOCO_LOG.TXT
 mlflow.db
 config.json
+model_checkpoints/*

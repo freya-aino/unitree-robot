@@ -20,6 +20,7 @@ dependencies = [
     "azureml-mlflow>=1.60.0",
     "azure-ai-ml>=1.30.0",
     "azure-identity>=1.25.1",
+    "onnxscript>=0.5.6",
 ]
 
 [tool.uv]
@@ -41,4 +42,5 @@ dev = [
     "jupyterlab>=4.4.10",
     "mediapy>=1.2.4",
     "mujoco-python-viewer>=0.1.4",
+    "onnx>=1.20.0",
 ]

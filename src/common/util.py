@@ -1,6 +1,7 @@
 import os
 import math
 import torch as T
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torchrl.modules import TanhNormal
@@ -9,6 +10,12 @@ from azure.ai.ml import MLClient
 from azure.identity import DefaultAzureCredential
 import json
 
+
+def save_as_onnx(agent: nn.Module, path: str, input_size: int):
+    # get_action_and_logits(self, observation: T.Tensor, eval: bool = False)
+    example_observation = (T.rand(1, 1, input_size),)
+    onnx_model = T.onnx.export(agent, example_observation, dynamo=True)
+    onnx_model.save(path)
 
 def get_azureml_mlflow_tracking_uri():
 

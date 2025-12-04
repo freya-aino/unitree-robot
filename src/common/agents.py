@@ -138,6 +138,10 @@ class PPOAgentTorcRL(nn.Module):
 
     def postprocess(self, action):
         return action.clip(-1, 1)
+    
+    def forward(self, observation: T.Tensor):
+        self.get_action_and_logits(observation, eval=True)
+
 
 
 class PPOAgent(nn.Module):
@@ -299,6 +303,10 @@ class PPOAgent(nn.Module):
 
     def postprocess(self, action):
         return F.tanh(action)
+    
+    def forward(self, observation: T.Tensor):
+        self.get_action_and_logits(observation, eval=True)
+
 
 # class PPOAgentGoogle(nn.Module):
 #   """Standard PPO Agent with GAE and observation normalization."""

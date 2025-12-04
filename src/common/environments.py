@@ -94,12 +94,12 @@ class MujocoMjxEnv:
         rng = jax.random.split(rng, self.num_parallel_environments)
 
         if initial_rest:
-            return jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.normal(r, shape=(mj_data.qvel.shape)) * self.initial_noise_scale))(rng)
-            # return jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.uniform(key=r, shape=mjx_data.qvel.shape) * self.initial_noise_scale))(rng)
+            # return jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.normal(r, shape=(mj_data.qvel.shape)) * self.initial_noise_scale))(rng)
+            return jax.vmap(lambda r: mjx_data.replace(qpos=mjx_data.qpos + jax.random.uniform(key=r, shape=mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
             # return jax.vmap(lambda r: mjx_data)(rng)
         else:
-            self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.normal(r, shape=(mj_data.qvel.shape)) * self.initial_noise_scale))(rng)
-            # self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.uniform(key=r, shape=mjx_data.qvel.shape) * self.initial_noise_scale))(rng)
+            # self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qvel=jax.random.normal(r, shape=(mj_data.qvel.shape)) * self.initial_noise_scale))(rng)
+            self.mjx_data = jax.vmap(lambda r: mjx_data.replace(qpos=mjx_data.qpos + jax.random.uniform(key=r, shape=mjx_data.qpos.shape) * self.initial_noise_scale))(rng)
             # self.mjx_data = jax.vmap(lambda r: mjx_data)(rng)
             # self.mj_data = mjx.get_data(self.mj_model, self.mjx_data)[0]
             return self._get_observations()
